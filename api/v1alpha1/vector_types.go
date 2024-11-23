@@ -38,8 +38,8 @@ type VectorAPI struct {
 	Playground *bool `json:"playground,omitempty"`
 }
 
-// AgentConfig defines the configuration for the Vector agent
-type AgentConfig struct {
+// VectorSpec defines the desired state of Vector
+type VectorSpec struct {
 	// Type specifies the type of Vector deployment (e.g., "agent")
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=agent
@@ -79,13 +79,6 @@ type AgentConfig struct {
 	Sinks map[string]Sink `json:"sinks,omitempty"`
 }
 
-// VectorSpec defines the desired state of Vector
-type VectorSpec struct {
-	// Agent defines the configuration for the Vector agent
-	// +kubebuilder:validation:Required
-	Agent AgentConfig `json:"agent"`
-}
-
 // VectorStatus defines the observed state of Vector
 type VectorStatus struct {
 	// Conditions represent the latest available observations of Vector's state
@@ -95,8 +88,8 @@ type VectorStatus struct {
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:scope=Namespaced
-//+kubebuilder:printcolumn:name="Type",type="string",JSONPath=".spec.agent.type"
-//+kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.agent.image"
+//+kubebuilder:printcolumn:name="Type",type="string",JSONPath=".spec.type"
+//+kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // Vector is the Schema for the vectors API

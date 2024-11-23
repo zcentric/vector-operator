@@ -15,10 +15,10 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.agent.type
+    - jsonPath: .spec.type
       name: Type
       type: string
-    - jsonPath: .spec.agent.image
+    - jsonPath: .spec.image
       name: Image
       type: string
     - jsonPath: .metadata.creationTimestamp
@@ -49,154 +49,145 @@ spec:
           spec:
             description: VectorSpec defines the desired state of Vector
             properties:
-              agent:
-                description: Agent defines the configuration for the Vector agent
+              api:
+                description: API configuration for Vector
                 properties:
-                  api:
-                    description: API configuration for Vector
-                    properties:
-                      address:
-                        default: 0.0.0.0:8686
-                        description: Address is the address to bind the API server
-                          to
-                        type: string
-                      enabled:
-                        default: false
-                        description: Enabled determines if the API server should be
-                          enabled
-                        type: boolean
-                      playground:
-                        default: false
-                        description: Playground determines if the GraphQL playground
-                          should be enabled
-                        type: boolean
-                    type: object
-                  data_dir:
-                    default: /tmp/vector-data-dir
-                    description: DataDir specifies the data directory for Vector
+                  address:
+                    default: 0.0.0.0:8686
+                    description: Address is the address to bind the API server to
                     type: string
-                  expire_metrics_secs:
-                    default: 30
-                    description: ExpireMetricsSecs specifies how long to keep metrics
-                      before expiring them
-                    format: int32
-                    type: integer
-                  image:
-                    description: Image specifies the Vector container image to use
-                    type: string
-                  sinks:
-                    additionalProperties:
-                      description: Sink defines a Vector sink configuration
-                      properties:
-                        config:
-                          description: Config contains the sink-specific configuration
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        encoding:
-                          description: Encoding specifies the sink encoding configuration
-                          properties:
-                            codec:
-                              description: Codec specifies the encoding codec
-                              type: string
-                          required:
-                          - codec
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        inputs:
-                          description: Inputs specifies the input sources or transforms
-                          items:
-                            type: string
-                          minItems: 1
-                          type: array
-                        type:
-                          description: Type specifies the type of the sink
-                          type: string
-                      required:
-                      - inputs
-                      - type
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    description: Sinks defines the Vector sinks configuration
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  sources:
-                    additionalProperties:
-                      description: Source defines a Vector source configuration
-                      properties:
-                        config:
-                          description: Config contains the source-specific configuration
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        extra_label_selector:
-                          description: ExtraLabelSelector specifies additional label
-                            selectors for kubernetes_logs source
-                          type: string
-                        type:
-                          description: Type specifies the type of the source
-                          type: string
-                      required:
-                      - type
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    description: Sources defines the Vector sources configuration
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  transforms:
-                    additionalProperties:
-                      description: Transform defines a Vector transform configuration
-                      properties:
-                        condition:
-                          description: Condition specifies the filter condition (for
-                            filter transform)
-                          properties:
-                            source:
-                              description: Source contains the condition expression
-                              type: string
-                            type:
-                              description: Type specifies the condition type
-                              type: string
-                          required:
-                          - source
-                          - type
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        config:
-                          description: Config contains the transform-specific configuration
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        inputs:
-                          description: Inputs specifies the input sources or transforms
-                          items:
-                            type: string
-                          minItems: 1
-                          type: array
-                        source:
-                          description: Source contains the transform expression (for
-                            remap transform)
-                          type: string
-                        type:
-                          description: Type specifies the type of the transform
-                          type: string
-                      required:
-                      - inputs
-                      - type
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    description: Transforms defines the Vector transforms configuration
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  type:
-                    description: Type specifies the type of Vector deployment (e.g.,
-                      "agent")
-                    enum:
-                    - agent
-                    type: string
-                required:
-                - image
-                - type
+                  enabled:
+                    default: false
+                    description: Enabled determines if the API server should be enabled
+                    type: boolean
+                  playground:
+                    default: false
+                    description: Playground determines if the GraphQL playground should
+                      be enabled
+                    type: boolean
                 type: object
+              data_dir:
+                default: /tmp/vector-data-dir
+                description: DataDir specifies the data directory for Vector
+                type: string
+              expire_metrics_secs:
+                default: 30
+                description: ExpireMetricsSecs specifies how long to keep metrics
+                  before expiring them
+                format: int32
+                type: integer
+              image:
+                description: Image specifies the Vector container image to use
+                type: string
+              sinks:
+                additionalProperties:
+                  description: Sink defines a Vector sink configuration
+                  properties:
+                    config:
+                      description: Config contains the sink-specific configuration
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    encoding:
+                      description: Encoding specifies the sink encoding configuration
+                      properties:
+                        codec:
+                          description: Codec specifies the encoding codec
+                          type: string
+                      required:
+                      - codec
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    inputs:
+                      description: Inputs specifies the input sources or transforms
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                    type:
+                      description: Type specifies the type of the sink
+                      type: string
+                  required:
+                  - inputs
+                  - type
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                description: Sinks defines the Vector sinks configuration
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              sources:
+                additionalProperties:
+                  description: Source defines a Vector source configuration
+                  properties:
+                    config:
+                      description: Config contains the source-specific configuration
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    extra_label_selector:
+                      description: ExtraLabelSelector specifies additional label selectors
+                        for kubernetes_logs source
+                      type: string
+                    type:
+                      description: Type specifies the type of the source
+                      type: string
+                  required:
+                  - type
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                description: Sources defines the Vector sources configuration
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              transforms:
+                additionalProperties:
+                  description: Transform defines a Vector transform configuration
+                  properties:
+                    condition:
+                      description: Condition specifies the filter condition (for filter
+                        transform)
+                      properties:
+                        source:
+                          description: Source contains the condition expression
+                          type: string
+                        type:
+                          description: Type specifies the condition type
+                          type: string
+                      required:
+                      - source
+                      - type
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    config:
+                      description: Config contains the transform-specific configuration
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    inputs:
+                      description: Inputs specifies the input sources or transforms
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                    source:
+                      description: Source contains the transform expression (for remap
+                        transform)
+                      type: string
+                    type:
+                      description: Type specifies the type of the transform
+                      type: string
+                  required:
+                  - inputs
+                  - type
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                description: Transforms defines the Vector transforms configuration
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              type:
+                description: Type specifies the type of Vector deployment (e.g., "agent")
+                enum:
+                - agent
+                type: string
             required:
-            - agent
+            - image
+            - type
             type: object
           status:
             description: VectorStatus defines the observed state of Vector
