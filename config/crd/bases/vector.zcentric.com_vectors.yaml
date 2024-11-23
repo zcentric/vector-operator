@@ -79,6 +79,15 @@ spec:
               image:
                 description: Image specifies the Vector container image to use
                 type: string
+              serviceAccount:
+                description: ServiceAccount configuration for Vector
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: Annotations to be added to the ServiceAccount
+                    type: object
+                type: object
               sinks:
                 additionalProperties:
                   description: Sink defines a Vector sink configuration
