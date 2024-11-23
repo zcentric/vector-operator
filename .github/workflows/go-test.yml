@@ -2,10 +2,11 @@ name: Go Tests
 
 on:
   pull_request:
-    branches: [ '*' ]
-  push:
-    branches:
-      - main
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
 
 jobs:
   test:
