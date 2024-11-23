@@ -1,0 +1,27 @@
+# permissions for end users to edit vectors.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: vector-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: vector-editor-role
+rules:
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectors
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectors/status
+  verbs:
+  - get

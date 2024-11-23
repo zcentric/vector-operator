@@ -1,0 +1,30 @@
+---
+# Minimal configuration example
+apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-agent-minimal
+  namespace: vector
+spec:
+  agent:
+    type: agent
+    image: "timberio/vector:0.38.0-distroless-libc"
+---
+# Complete configuration example with all optional fields
+apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-agent-complete
+  namespace: vector
+spec:
+  agent:
+    type: agent
+    image: "timberio/vector:0.38.0-distroless-libc"
+    # Optional API configuration
+    api:
+      address: "0.0.0.0:8686"  # Default value
+      enabled: false           # Default value
+      playground: false        # Default value
+    # Optional Vector configuration
+    data_dir: "/tmp/vector-data-dir"  # Default value
+    expire_metrics_secs: 30           # Default value

@@ -1,0 +1,105 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectors
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectors/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectors/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - vectorpipeline.zcentric.com
+  resources:
+  - vectorpipelines
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - vectorpipeline.zcentric.com
+  resources:
+  - vectorpipelines/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - vectorpipeline.zcentric.com
+  resources:
+  - vectorpipelines/status
+  verbs:
+  - get
+  - patch
+  - update

@@ -1,0 +1,23 @@
+# permissions for end users to view vectors.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: vector-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: vector-viewer-role
+rules:
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectors
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectors/status
+  verbs:
+  - get

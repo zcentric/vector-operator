@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- vector_v1alpha1_vector.yaml
+- vector_v1alpha1_vectorpipeline.yaml
+- test_vectorpipeline.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
