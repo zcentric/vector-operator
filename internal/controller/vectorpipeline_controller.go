@@ -266,14 +266,14 @@ func (r *VectorPipelineReconciler) updateVectorPipelineComponents(ctx context.Co
 	updatedVector := vector.DeepCopy()
 
 	// Initialize maps if they don't exist
-	if updatedVector.Spec.Agent.Sources == nil {
-		updatedVector.Spec.Agent.Sources = make(map[string]vectorv1alpha1.Source)
+	if updatedVector.Spec.Sources == nil {
+		updatedVector.Spec.Sources = make(map[string]vectorv1alpha1.Source)
 	}
-	if updatedVector.Spec.Agent.Transforms == nil {
-		updatedVector.Spec.Agent.Transforms = make(map[string]vectorv1alpha1.Transform)
+	if updatedVector.Spec.Transforms == nil {
+		updatedVector.Spec.Transforms = make(map[string]vectorv1alpha1.Transform)
 	}
-	if updatedVector.Spec.Agent.Sinks == nil {
-		updatedVector.Spec.Agent.Sinks = make(map[string]vectorv1alpha1.Sink)
+	if updatedVector.Spec.Sinks == nil {
+		updatedVector.Spec.Sinks = make(map[string]vectorv1alpha1.Sink)
 	}
 
 	// Merge configurations from all related pipelines
@@ -281,19 +281,19 @@ func (r *VectorPipelineReconciler) updateVectorPipelineComponents(ctx context.Co
 		// Merge sources
 		for name, source := range p.Spec.Sources {
 			logger.Info("Adding source", "name", name, "type", source.Type)
-			updatedVector.Spec.Agent.Sources[name] = source
+			updatedVector.Spec.Sources[name] = source
 		}
 
 		// Merge transforms
 		for name, transform := range p.Spec.Transforms {
 			logger.Info("Adding transform", "name", name, "type", transform.Type)
-			updatedVector.Spec.Agent.Transforms[name] = transform
+			updatedVector.Spec.Transforms[name] = transform
 		}
 
 		// Merge sinks
 		for name, sink := range p.Spec.Sinks {
 			logger.Info("Adding sink", "name", name, "type", sink.Type)
-			updatedVector.Spec.Agent.Sinks[name] = sink
+			updatedVector.Spec.Sinks[name] = sink
 		}
 	}
 

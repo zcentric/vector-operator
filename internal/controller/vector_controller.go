@@ -97,7 +97,7 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// Handle agent type with DaemonSet
-	if vector.Spec.Agent.Type == "agent" {
+	if vector.Spec.Type == "agent" {
 		// Create or update the ConfigMap
 		if err := r.reconcileConfigMap(ctx, vector); err != nil {
 			logger.Error(err, "Failed to reconcile ConfigMap")
@@ -130,7 +130,7 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 		// Update daemonset if needed
 		if daemonSetNeedsUpdate(vector, daemonset) {
-			daemonset.Spec.Template.Spec.Containers[0].Image = vector.Spec.Agent.Image
+			daemonset.Spec.Template.Spec.Containers[0].Image = vector.Spec.Image
 			err = r.Update(ctx, daemonset)
 			if err != nil {
 				logger.Error(err, "Failed to update DaemonSet", "DaemonSet.Namespace", daemonset.Namespace, "DaemonSet.Name", daemonset.Name)
@@ -190,10 +190,10 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 
 	// Add API configuration
 	configParts = append(configParts, "\n# Vector's API (disabled by default)", "# Enable and try it out with the 'vector top' command")
-	if v.Spec.Agent.API != nil {
-		apiConfig := fmt.Sprintf("api:\n  enabled: %v", *v.Spec.Agent.API.Enabled)
-		if v.Spec.Agent.API.Address != "" {
-			apiConfig += fmt.Sprintf("\n  address: \"%s\"", v.Spec.Agent.API.Address)
+	if v.Spec.API != nil {
+		apiConfig := fmt.Sprintf("api:\n  enabled: %v", *v.Spec.API.Enabled)
+		if v.Spec.API.Address != "" {
+			apiConfig += fmt.Sprintf("\n  address: \"%s\"", v.Spec.API.Address)
 		}
 		configParts = append(configParts, apiConfig)
 	} else {
@@ -201,8 +201,8 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 	}
 
 	// Add sources if any
-	if len(v.Spec.Agent.Sources) > 0 {
-		sourcesYaml, err := yaml.Marshal(v.Spec.Agent.Sources)
+	if len(v.Spec.Sources) > 0 {
+		sourcesYaml, err := yaml.Marshal(v.Spec.Sources)
 		if err != nil {
 			return fmt.Errorf("failed to marshal sources: %w", err)
 		}
@@ -210,8 +210,8 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 	}
 
 	// Add transforms if any
-	if len(v.Spec.Agent.Transforms) > 0 {
-		transformsYaml, err := yaml.Marshal(v.Spec.Agent.Transforms)
+	if len(v.Spec.Transforms) > 0 {
+		transformsYaml, err := yaml.Marshal(v.Spec.Transforms)
 		if err != nil {
 			return fmt.Errorf("failed to marshal transforms: %w", err)
 		}
@@ -219,8 +219,8 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 	}
 
 	// Add sinks if any
-	if len(v.Spec.Agent.Sinks) > 0 {
-		sinksYaml, err := yaml.Marshal(v.Spec.Agent.Sinks)
+	if len(v.Spec.Sinks) > 0 {
+		sinksYaml, err := yaml.Marshal(v.Spec.Sinks)
 		if err != nil {
 			return fmt.Errorf("failed to marshal sinks: %w", err)
 		}
@@ -297,7 +297,7 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Image: v.Spec.Agent.Image,
+						Image: v.Spec.Image,
 						Name:  "vector",
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: 8686,
@@ -361,7 +361,7 @@ func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.Daemo
 	if len(daemonset.Spec.Template.Spec.Containers) == 0 {
 		return true
 	}
-	return daemonset.Spec.Template.Spec.Containers[0].Image != vector.Spec.Agent.Image
+	return daemonset.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image
 }
 
 // updateVectorStatus updates the Status field of the Vector resource

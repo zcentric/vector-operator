@@ -1,9 +1,0 @@
-apiVersion: vector.zcentric.com/v1alpha1
-kind: Vector
-metadata:
-  name: vector-agent
-  namespace: vector
-spec:
-  agent:
-    type: agent
-    image: "timberio/vector:0.24.0-distroless-libc"
