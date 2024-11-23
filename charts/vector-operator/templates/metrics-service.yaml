@@ -1,0 +1,19 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vector-operator.fullname" . }}-metrics-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vector-operator.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.metrics.service.type }}
+  ports:
+  - name: metrics
+    port: {{ .Values.metrics.service.port }}
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    {{- include "vector-operator.selectorLabels" . | nindent 4 }}
+    control-plane: controller-manager
+{{- end }}

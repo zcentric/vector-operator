@@ -1,0 +1,69 @@
+# Default values for vector-operator
+
+# Install CRDs as part of this chart
+installCRDs: true
+
+# Image configuration
+image:
+  repository: ghcr.io/zcentric/vector-operator
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to Chart appVersion if not set
+
+# Resource configuration
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Service account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Metrics configuration
+metrics:
+  enabled: true
+  service:
+    port: 8443
+    type: ClusterIP
+
+# Leader election configuration
+leaderElection:
+  enabled: true
+
+# Log level configuration
+logLevel: info
+
+# Webhook configuration
+webhook:
+  enabled: false
+  port: 9443
+  certDir: /tmp/k8s-webhook-server/serving-certs

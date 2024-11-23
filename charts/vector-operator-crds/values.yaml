@@ -1,0 +1,5 @@
+# Default values for vector-operator-crds
+# This is a YAML-formatted file.
+
+# No configuration values needed for CRDs
+createCRDs: true
