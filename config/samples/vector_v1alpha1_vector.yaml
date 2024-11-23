@@ -25,3 +25,7 @@ spec:
   # Optional Vector configuration
   data_dir: "/tmp/vector-data-dir"  # Default value
   expire_metrics_secs: 30           # Default value
+  # Optional ServiceAccount configuration
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/vector-role"  # Example AWS IRSA annotation

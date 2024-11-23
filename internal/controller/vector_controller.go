@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -54,6 +55,7 @@ type VectorReconciler struct {
 // +kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
@@ -98,6 +100,12 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	// Handle agent type with DaemonSet
 	if vector.Spec.Type == "agent" {
+		// Create or update the ServiceAccount
+		if err := r.reconcileServiceAccount(ctx, vector); err != nil {
+			logger.Error(err, "Failed to reconcile ServiceAccount")
+			return ctrl.Result{}, err
+		}
+
 		// Create or update the ConfigMap
 		if err := r.reconcileConfigMap(ctx, vector); err != nil {
 			logger.Error(err, "Failed to reconcile ConfigMap")
@@ -151,6 +159,52 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
 }
 
+// reconcileServiceAccount creates or updates the Vector ServiceAccount
+func (r *VectorReconciler) reconcileServiceAccount(ctx context.Context, v *vectorv1alpha1.Vector) error {
+	logger := log.FromContext(ctx)
+
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      v.Name,
+			Namespace: v.Namespace,
+		},
+	}
+
+	// Add annotations if specified
+	if v.Spec.ServiceAccount != nil && v.Spec.ServiceAccount.Annotations != nil {
+		sa.ObjectMeta.Annotations = v.Spec.ServiceAccount.Annotations
+	}
+
+	// Set Vector instance as the owner
+	if err := ctrl.SetControllerReference(v, sa, r.Scheme); err != nil {
+		return err
+	}
+
+	// Create or update the ServiceAccount
+	existingSA := &corev1.ServiceAccount{}
+	err := r.Get(ctx, types.NamespacedName{Name: sa.Name, Namespace: sa.Namespace}, existingSA)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating new ServiceAccount",
+				"name", sa.Name,
+				"namespace", sa.Namespace)
+			return r.Create(ctx, sa)
+		}
+		return err
+	}
+
+	// Update annotations if they've changed
+	if !reflect.DeepEqual(existingSA.Annotations, sa.Annotations) {
+		existingSA.Annotations = sa.Annotations
+		logger.Info("Updating ServiceAccount annotations",
+			"name", existingSA.Name,
+			"namespace", existingSA.Namespace)
+		return r.Update(ctx, existingSA)
+	}
+
+	return nil
+}
+
 // cleanupResources removes all resources owned by the Vector CR
 func (r *VectorReconciler) cleanupResources(ctx context.Context, v *vectorv1alpha1.Vector) error {
 	logger := log.FromContext(ctx)
@@ -171,6 +225,16 @@ func (r *VectorReconciler) cleanupResources(ctx context.Context, v *vectorv1alph
 	if err == nil {
 		logger.Info("Deleting ConfigMap", "name", cm.Name)
 		if err := r.Delete(ctx, cm); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// Delete ServiceAccount if it exists
+	sa := &corev1.ServiceAccount{}
+	err = r.Get(ctx, types.NamespacedName{Name: v.Name, Namespace: v.Namespace}, sa)
+	if err == nil {
+		logger.Info("Deleting ServiceAccount", "name", sa.Name)
+		if err := r.Delete(ctx, sa); err != nil && !errors.IsNotFound(err) {
 			return err
 		}
 	}
@@ -296,6 +360,7 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 					Labels: ls,
 				},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: v.Name,
 					Containers: []corev1.Container{{
 						Image: v.Spec.Image,
 						Name:  "vector",
@@ -403,5 +468,6 @@ func (r *VectorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&vectorv1alpha1.Vector{}).
 		Owns(&appsv1.DaemonSet{}).
 		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.ServiceAccount{}).
 		Complete(r)
 }

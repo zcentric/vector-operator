@@ -38,6 +38,13 @@ type VectorAPI struct {
 	Playground *bool `json:"playground,omitempty"`
 }
 
+// ServiceAccountSpec defines the configuration for the Vector ServiceAccount
+type ServiceAccountSpec struct {
+	// Annotations to be added to the ServiceAccount
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
 // VectorSpec defines the desired state of Vector
 type VectorSpec struct {
 	// Type specifies the type of Vector deployment (e.g., "agent")
@@ -62,6 +69,10 @@ type VectorSpec struct {
 	// +optional
 	// +kubebuilder:default=30
 	ExpireMetricsSecs *int32 `json:"expire_metrics_secs,omitempty"`
+
+	// ServiceAccount configuration for Vector
+	// +optional
+	ServiceAccount *ServiceAccountSpec `json:"serviceAccount,omitempty"`
 
 	// Sources defines the Vector sources configuration
 	// +optional
