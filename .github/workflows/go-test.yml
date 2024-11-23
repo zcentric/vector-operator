@@ -1,0 +1,41 @@
+name: Go Tests
+
+on:
+  pull_request:
+    branches: [ '*' ]
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Run unit tests
+      run: go test -v ./internal/controller/... -coverprofile=coverage.out
+
+    - name: Run e2e tests
+      run: go test -v ./test/e2e/... -coverprofile=e2e-coverage.out
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./coverage.out,./e2e-coverage.out
+        flags: unittests,e2etests
+        name: codecov-umbrella
+        fail_ci_if_error: true
+        verbose: true
+        token: ${{{ secrets.CODECOV_TOKEN }}}
