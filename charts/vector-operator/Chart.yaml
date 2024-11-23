@@ -1,0 +1,11 @@
+apiVersion: v2
+name: vector-operator
+description: A Helm chart for Vector Operator
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: vector-operator-crds
+    version: 0.1.0
+    repository: file://../vector-operator-crds
+    condition: installCRDs
