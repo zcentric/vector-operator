@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -85,6 +86,7 @@ const (
 //+kubebuilder:rbac:groups=vectorpipeline.zcentric.com,resources=vectorpipelines/finalizers,verbs=update
 //+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+//+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;update;patch
 
 // updateVectorMetrics updates the Vector CR count metric
 func (r *VectorPipelineReconciler) updateVectorMetrics(ctx context.Context) {
@@ -123,8 +125,10 @@ func (r *VectorPipelineReconciler) updatePipelineMetrics(ctx context.Context, ve
 	pipelineFailureCount.WithLabelValues(vectorRef).Set(float64(failureCount))
 }
 
-// triggerVectorReconciliation triggers a reconciliation of the referenced Vector
+// triggerVectorReconciliation triggers a reconciliation of the referenced Vector and restarts the DaemonSet
 func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Context, vectorRef string, namespace string) error {
+	logger := log.FromContext(ctx)
+
 	// Get the Vector instance
 	vector := &vectorv1alpha1.Vector{}
 	err := r.Get(ctx, types.NamespacedName{
@@ -141,7 +145,31 @@ func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Conte
 	}
 	vector.Annotations["vectorpipeline.zcentric.com/last-update"] = time.Now().Format(time.RFC3339)
 
-	return r.Update(ctx, vector)
+	if err := r.Update(ctx, vector); err != nil {
+		return err
+	}
+
+	// Get the DaemonSet
+	ds := &appsv1.DaemonSet{}
+	err = r.Get(ctx, types.NamespacedName{
+		Name:      vectorRef,
+		Namespace: namespace,
+	}, ds)
+	if err != nil {
+		return err
+	}
+
+	// Update the DaemonSet's pod template annotations to trigger a rolling restart
+	if ds.Spec.Template.Annotations == nil {
+		ds.Spec.Template.Annotations = make(map[string]string)
+	}
+	ds.Spec.Template.Annotations["vectorpipeline.zcentric.com/restart"] = time.Now().Format(time.RFC3339)
+
+	logger.Info("Triggering rolling restart of Vector DaemonSet",
+		"name", ds.Name,
+		"namespace", ds.Namespace)
+
+	return r.Update(ctx, ds)
 }
 
 // Reconcile handles the reconciliation loop for VectorPipeline resources
@@ -204,7 +232,7 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		condition.Reason = "VectorFound"
 		condition.Message = "Referenced Vector exists"
 
-		// Trigger Vector reconciliation to update ConfigMap
+		// Trigger Vector reconciliation to update ConfigMap and restart DaemonSet
 		if err := r.triggerVectorReconciliation(ctx, vectorPipeline.Spec.VectorRef, req.Namespace); err != nil {
 			logger.Error(err, "Failed to trigger Vector reconciliation")
 			return ctrl.Result{}, err
