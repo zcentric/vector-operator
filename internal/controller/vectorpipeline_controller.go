@@ -159,12 +159,6 @@ func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Conte
 		return err
 	}
 
-	// Update the DaemonSet's pod template annotations to trigger a rolling restart
-	if ds.Spec.Template.Annotations == nil {
-		ds.Spec.Template.Annotations = make(map[string]string)
-	}
-	ds.Spec.Template.Annotations["vectorpipeline.zcentric.com/restart"] = time.Now().Format(time.RFC3339)
-
 	logger.Info("Triggering rolling restart of Vector DaemonSet",
 		"name", ds.Name,
 		"namespace", ds.Namespace)
