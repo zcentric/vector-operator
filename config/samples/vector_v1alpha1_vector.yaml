@@ -1,4 +1,4 @@
-# Minimal configuration example
+# Minimal agent example
 apiVersion: vector.zcentric.com/v1alpha1
 kind: Vector
 metadata:
@@ -8,7 +8,7 @@ spec:
   type: agent
   image: "timberio/vector:0.38.0-distroless-libc"
 ---
-# Complete configuration example with all optional fields
+# Complete agent example with all optional fields
 apiVersion: vector.zcentric.com/v1alpha1
 kind: Vector
 metadata:
@@ -34,8 +34,32 @@ spec:
 apiVersion: vector.zcentric.com/v1alpha1
 kind: Vector
 metadata:
-  name: vector-aggregator
+  name: vector-aggregator-minimal
   namespace: vector
 spec:
   type: aggregator
   image: "timberio/vector:0.38.0-distroless-libc"
+---
+# Complete aggregator example with all optional fields
+apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-aggregator-complete
+  namespace: vector
+spec:
+  type: aggregator
+  image: "timberio/vector:0.38.0-distroless-libc"
+  # Optional deployment configuration
+  replicas: 2               # Default value is 1
+  # Optional API configuration
+  api:
+    address: "0.0.0.0:8686"  # Default value
+    enabled: true            # Enable API for monitoring
+    playground: true         # Enable GraphQL playground for testing
+  # Optional Vector configuration
+  data_dir: "/tmp/vector-data-dir"  # Default value
+  expire_metrics_secs: 30           # Default value
+  # Optional ServiceAccount configuration
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/vector-role"  # Example AWS IRSA annotation
