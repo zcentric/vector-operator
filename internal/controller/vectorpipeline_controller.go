@@ -123,6 +123,27 @@ func (r *VectorPipelineReconciler) updatePipelineMetrics(ctx context.Context, ve
 	pipelineFailureCount.WithLabelValues(vectorRef).Set(float64(failureCount))
 }
 
+// triggerVectorReconciliation triggers a reconciliation of the referenced Vector
+func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Context, vectorRef string, namespace string) error {
+	// Get the Vector instance
+	vector := &vectorv1alpha1.Vector{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      vectorRef,
+		Namespace: namespace,
+	}, vector)
+	if err != nil {
+		return err
+	}
+
+	// Update the Vector's annotation to trigger reconciliation
+	if vector.Annotations == nil {
+		vector.Annotations = make(map[string]string)
+	}
+	vector.Annotations["vectorpipeline.zcentric.com/last-update"] = time.Now().Format(time.RFC3339)
+
+	return r.Update(ctx, vector)
+}
+
 // Reconcile handles the reconciliation loop for VectorPipeline resources
 func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -183,14 +204,9 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		condition.Reason = "VectorFound"
 		condition.Message = "Referenced Vector exists"
 
-		// Update Vector's pipeline components
-		if err := r.updateVectorPipelineComponents(ctx, vectorPipeline); err != nil {
-			if errors.IsConflict(err) {
-				// If there's a conflict, requeue the request
-				logger.Info("Conflict detected while updating Vector, requeueing")
-				return ctrl.Result{Requeue: true}, nil
-			}
-			logger.Error(err, "Failed to update Vector pipeline components")
+		// Trigger Vector reconciliation to update ConfigMap
+		if err := r.triggerVectorReconciliation(ctx, vectorPipeline.Spec.VectorRef, req.Namespace); err != nil {
+			logger.Error(err, "Failed to trigger Vector reconciliation")
 			return ctrl.Result{}, err
 		}
 	}
@@ -206,103 +222,6 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	r.updatePipelineMetrics(ctx, vectorPipeline.Spec.VectorRef)
 
 	return ctrl.Result{}, nil
-}
-
-// findRelatedPipelines finds all VectorPipelines that reference the same Vector
-func (r *VectorPipelineReconciler) findRelatedPipelines(ctx context.Context, pipeline *vectorv1alpha1.VectorPipeline) ([]vectorv1alpha1.VectorPipeline, error) {
-	logger := log.FromContext(ctx)
-
-	var pipelineList vectorv1alpha1.VectorPipelineList
-	if err := r.List(ctx, &pipelineList, client.InNamespace(pipeline.Namespace)); err != nil {
-		logger.Error(err, "Failed to list VectorPipelines")
-		return nil, err
-	}
-
-	var relatedPipelines []vectorv1alpha1.VectorPipeline
-	for _, p := range pipelineList.Items {
-		if p.Spec.VectorRef == pipeline.Spec.VectorRef {
-			relatedPipelines = append(relatedPipelines, p)
-		}
-	}
-
-	logger.Info("Found related pipelines",
-		"vectorRef", pipeline.Spec.VectorRef,
-		"count", len(relatedPipelines),
-		"pipelines", getPipelineNames(relatedPipelines))
-
-	return relatedPipelines, nil
-}
-
-// getPipelineNames returns a slice of pipeline names for logging
-func getPipelineNames(pipelines []vectorv1alpha1.VectorPipeline) []string {
-	names := make([]string, len(pipelines))
-	for i, p := range pipelines {
-		names[i] = p.Name
-	}
-	return names
-}
-
-// updateVectorPipelineComponents updates the Vector CR with pipeline components
-func (r *VectorPipelineReconciler) updateVectorPipelineComponents(ctx context.Context, pipeline *vectorv1alpha1.VectorPipeline) error {
-	logger := log.FromContext(ctx)
-
-	// Find all pipelines that reference the same Vector
-	relatedPipelines, err := r.findRelatedPipelines(ctx, pipeline)
-	if err != nil {
-		return fmt.Errorf("failed to find related pipelines: %w", err)
-	}
-
-	// Get the referenced Vector
-	vector := &vectorv1alpha1.Vector{}
-	err = r.Get(ctx, types.NamespacedName{
-		Name:      pipeline.Spec.VectorRef,
-		Namespace: pipeline.Namespace,
-	}, vector)
-	if err != nil {
-		return fmt.Errorf("failed to get referenced Vector: %w", err)
-	}
-
-	// Create a copy of the Vector to update
-	updatedVector := vector.DeepCopy()
-
-	// Initialize maps if they don't exist
-	if updatedVector.Spec.Sources == nil {
-		updatedVector.Spec.Sources = make(map[string]vectorv1alpha1.Source)
-	}
-	if updatedVector.Spec.Transforms == nil {
-		updatedVector.Spec.Transforms = make(map[string]vectorv1alpha1.Transform)
-	}
-	if updatedVector.Spec.Sinks == nil {
-		updatedVector.Spec.Sinks = make(map[string]vectorv1alpha1.Sink)
-	}
-
-	// Merge configurations from all related pipelines
-	for _, p := range relatedPipelines {
-		// Merge sources
-		for name, source := range p.Spec.Sources {
-			logger.Info("Adding source", "name", name, "type", source.Type)
-			updatedVector.Spec.Sources[name] = source
-		}
-
-		// Merge transforms
-		for name, transform := range p.Spec.Transforms {
-			logger.Info("Adding transform", "name", name, "type", transform.Type)
-			updatedVector.Spec.Transforms[name] = transform
-		}
-
-		// Merge sinks
-		for name, sink := range p.Spec.Sinks {
-			logger.Info("Adding sink", "name", name, "type", sink.Type)
-			updatedVector.Spec.Sinks[name] = sink
-		}
-	}
-
-	// Update the Vector CR
-	if err := r.Update(ctx, updatedVector); err != nil {
-		return fmt.Errorf("failed to update Vector: %w", err)
-	}
-
-	return nil
 }
 
 // enqueueRequestsForVector returns reconcile requests for VectorPipelines that reference the Vector

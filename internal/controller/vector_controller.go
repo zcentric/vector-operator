@@ -25,6 +25,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,7 +35,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/yaml"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
 )
@@ -58,6 +58,7 @@ type VectorReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 
 func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -103,6 +104,12 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		// Create or update the ServiceAccount
 		if err := r.reconcileServiceAccount(ctx, vector); err != nil {
 			logger.Error(err, "Failed to reconcile ServiceAccount")
+			return ctrl.Result{}, err
+		}
+
+		// Create or update the ClusterRole and ClusterRoleBinding
+		if err := r.reconcileRBAC(ctx, vector); err != nil {
+			logger.Error(err, "Failed to reconcile RBAC")
 			return ctrl.Result{}, err
 		}
 
@@ -159,6 +166,150 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
 }
 
+// reconcileRBAC creates or updates the ClusterRole and ClusterRoleBinding for the Vector instance
+func (r *VectorReconciler) reconcileRBAC(ctx context.Context, v *vectorv1alpha1.Vector) error {
+	logger := log.FromContext(ctx)
+
+	// Create ClusterRole
+	cr := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("vector-%s-%s", v.Namespace, v.Name),
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "Vector",
+				"app.kubernetes.io/instance":   v.Name,
+				"app.kubernetes.io/namespace":  v.Namespace,
+				"app.kubernetes.io/managed-by": "vector-operator",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods", "namespaces", "nodes"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+		},
+	}
+
+	// Create or update ClusterRole
+	existingCR := &rbacv1.ClusterRole{}
+	err := r.Get(ctx, types.NamespacedName{Name: cr.Name}, existingCR)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating new ClusterRole", "name", cr.Name)
+			return r.Create(ctx, cr)
+		}
+		return err
+	}
+
+	// Update existing ClusterRole
+	existingCR.Rules = cr.Rules
+	existingCR.Labels = cr.Labels
+	if err := r.Update(ctx, existingCR); err != nil {
+		return err
+	}
+
+	// Create ClusterRoleBinding
+	crb := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("vector-%s-%s", v.Namespace, v.Name),
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "Vector",
+				"app.kubernetes.io/instance":   v.Name,
+				"app.kubernetes.io/namespace":  v.Namespace,
+				"app.kubernetes.io/managed-by": "vector-operator",
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     cr.Name,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      v.Name,
+				Namespace: v.Namespace,
+			},
+		},
+	}
+
+	// Create or update ClusterRoleBinding
+	existingCRB := &rbacv1.ClusterRoleBinding{}
+	err = r.Get(ctx, types.NamespacedName{Name: crb.Name}, existingCRB)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating new ClusterRoleBinding", "name", crb.Name)
+			return r.Create(ctx, crb)
+		}
+		return err
+	}
+
+	// Update existing ClusterRoleBinding
+	existingCRB.RoleRef = crb.RoleRef
+	existingCRB.Subjects = crb.Subjects
+	existingCRB.Labels = crb.Labels
+	return r.Update(ctx, existingCRB)
+}
+
+// cleanupResources removes all resources owned by the Vector CR
+func (r *VectorReconciler) cleanupResources(ctx context.Context, v *vectorv1alpha1.Vector) error {
+	logger := log.FromContext(ctx)
+
+	// Delete DaemonSet if it exists
+	ds := &appsv1.DaemonSet{}
+	err := r.Get(ctx, types.NamespacedName{Name: v.Name, Namespace: v.Namespace}, ds)
+	if err == nil {
+		logger.Info("Deleting DaemonSet", "name", ds.Name)
+		if err := r.Delete(ctx, ds); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// Delete ConfigMap if it exists
+	cm := &corev1.ConfigMap{}
+	err = r.Get(ctx, types.NamespacedName{Name: v.Name + "-config", Namespace: v.Namespace}, cm)
+	if err == nil {
+		logger.Info("Deleting ConfigMap", "name", cm.Name)
+		if err := r.Delete(ctx, cm); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// Delete ServiceAccount if it exists
+	sa := &corev1.ServiceAccount{}
+	err = r.Get(ctx, types.NamespacedName{Name: v.Name, Namespace: v.Namespace}, sa)
+	if err == nil {
+		logger.Info("Deleting ServiceAccount", "name", sa.Name)
+		if err := r.Delete(ctx, sa); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// Delete ClusterRole if it exists
+	cr := &rbacv1.ClusterRole{}
+	crName := fmt.Sprintf("vector-%s-%s", v.Namespace, v.Name)
+	err = r.Get(ctx, types.NamespacedName{Name: crName}, cr)
+	if err == nil {
+		logger.Info("Deleting ClusterRole", "name", cr.Name)
+		if err := r.Delete(ctx, cr); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// Delete ClusterRoleBinding if it exists
+	crb := &rbacv1.ClusterRoleBinding{}
+	crbName := fmt.Sprintf("vector-%s-%s", v.Namespace, v.Name)
+	err = r.Get(ctx, types.NamespacedName{Name: crbName}, crb)
+	if err == nil {
+		logger.Info("Deleting ClusterRoleBinding", "name", crb.Name)
+		if err := r.Delete(ctx, crb); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // reconcileServiceAccount creates or updates the Vector ServiceAccount
 func (r *VectorReconciler) reconcileServiceAccount(ctx context.Context, v *vectorv1alpha1.Vector) error {
 	logger := log.FromContext(ctx)
@@ -205,43 +356,6 @@ func (r *VectorReconciler) reconcileServiceAccount(ctx context.Context, v *vecto
 	return nil
 }
 
-// cleanupResources removes all resources owned by the Vector CR
-func (r *VectorReconciler) cleanupResources(ctx context.Context, v *vectorv1alpha1.Vector) error {
-	logger := log.FromContext(ctx)
-
-	// Delete DaemonSet if it exists
-	ds := &appsv1.DaemonSet{}
-	err := r.Get(ctx, types.NamespacedName{Name: v.Name, Namespace: v.Namespace}, ds)
-	if err == nil {
-		logger.Info("Deleting DaemonSet", "name", ds.Name)
-		if err := r.Delete(ctx, ds); err != nil && !errors.IsNotFound(err) {
-			return err
-		}
-	}
-
-	// Delete ConfigMap if it exists
-	cm := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: v.Name + "-config", Namespace: v.Namespace}, cm)
-	if err == nil {
-		logger.Info("Deleting ConfigMap", "name", cm.Name)
-		if err := r.Delete(ctx, cm); err != nil && !errors.IsNotFound(err) {
-			return err
-		}
-	}
-
-	// Delete ServiceAccount if it exists
-	sa := &corev1.ServiceAccount{}
-	err = r.Get(ctx, types.NamespacedName{Name: v.Name, Namespace: v.Namespace}, sa)
-	if err == nil {
-		logger.Info("Deleting ServiceAccount", "name", sa.Name)
-		if err := r.Delete(ctx, sa); err != nil && !errors.IsNotFound(err) {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // reconcileConfigMap creates or updates the Vector ConfigMap
 func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1alpha1.Vector) error {
 	logger := log.FromContext(ctx)
@@ -264,31 +378,87 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 		configParts = append(configParts, "api:\n  enabled: false")
 	}
 
-	// Add sources if any
-	if len(v.Spec.Sources) > 0 {
-		sourcesYaml, err := yaml.Marshal(v.Spec.Sources)
-		if err != nil {
-			return fmt.Errorf("failed to marshal sources: %w", err)
-		}
-		configParts = append(configParts, "\n# Sources configuration", fmt.Sprintf("sources:\n%s", indent(string(sourcesYaml), "  ")))
+	// Get all VectorPipelines that reference this Vector
+	var pipelineList vectorv1alpha1.VectorPipelineList
+	if err := r.List(ctx, &pipelineList, client.InNamespace(v.Namespace)); err != nil {
+		return err
 	}
 
-	// Add transforms if any
-	if len(v.Spec.Transforms) > 0 {
-		transformsYaml, err := yaml.Marshal(v.Spec.Transforms)
-		if err != nil {
-			return fmt.Errorf("failed to marshal transforms: %w", err)
+	// Initialize sources, transforms, and sinks sections
+	var sourcesConfig []string
+	var transformsConfig []string
+	var sinksConfig []string
+
+	// Add sources, transforms, and sinks from each pipeline
+	for _, pipeline := range pipelineList.Items {
+		if pipeline.Spec.VectorRef == v.Name {
+			// Add sources
+			for name, source := range pipeline.Spec.Sources {
+				sourceConfig := fmt.Sprintf("  %s:\n    type: %s", name, source.Type)
+				if source.ExtraLabelSelector != "" {
+					sourceConfig += fmt.Sprintf("\n    extra_label_selector: \"%s\"", source.ExtraLabelSelector)
+				}
+				if source.Config.Raw != nil {
+					sourceConfig += fmt.Sprintf("\n    %s", strings.ReplaceAll(strings.TrimSpace(string(source.Config.Raw)), "\n", "\n    "))
+				}
+				sourcesConfig = append(sourcesConfig, sourceConfig)
+			}
+
+			// Add transforms
+			for name, transform := range pipeline.Spec.Transforms {
+				transformConfig := fmt.Sprintf("  %s:\n    type: %s\n    inputs: [%s]",
+					name,
+					transform.Type,
+					strings.Join(transform.Inputs, ", "))
+
+				// Handle source field with proper YAML formatting
+				if transform.Source != "" {
+					transformConfig += "\n    source: |"
+					for _, line := range strings.Split(transform.Source, "\n") {
+						transformConfig += fmt.Sprintf("\n      %s", line)
+					}
+				}
+
+				if transform.Condition != nil {
+					transformConfig += fmt.Sprintf("\n    condition:\n      type: %s\n      source: \"%s\"",
+						transform.Condition.Type,
+						transform.Condition.Source)
+				}
+				if transform.Config.Raw != nil {
+					transformConfig += fmt.Sprintf("\n    %s", strings.ReplaceAll(strings.TrimSpace(string(transform.Config.Raw)), "\n", "\n    "))
+				}
+				transformsConfig = append(transformsConfig, transformConfig)
+			}
+
+			// Add sinks
+			for name, sink := range pipeline.Spec.Sinks {
+				sinkConfig := fmt.Sprintf("  %s:\n    type: %s\n    inputs: [%s]",
+					name,
+					sink.Type,
+					strings.Join(sink.Inputs, ", "))
+				if sink.Encoding != nil {
+					sinkConfig += fmt.Sprintf("\n    encoding:\n      codec: %s", sink.Encoding.Codec)
+				}
+				if sink.Config.Raw != nil {
+					sinkConfig += fmt.Sprintf("\n    %s", strings.ReplaceAll(strings.TrimSpace(string(sink.Config.Raw)), "\n", "\n    "))
+				}
+				sinksConfig = append(sinksConfig, sinkConfig)
+			}
 		}
-		configParts = append(configParts, "\n# Transforms configuration", fmt.Sprintf("transforms:\n%s", indent(string(transformsYaml), "  ")))
 	}
 
-	// Add sinks if any
-	if len(v.Spec.Sinks) > 0 {
-		sinksYaml, err := yaml.Marshal(v.Spec.Sinks)
-		if err != nil {
-			return fmt.Errorf("failed to marshal sinks: %w", err)
-		}
-		configParts = append(configParts, "\n# Sinks configuration", fmt.Sprintf("sinks:\n%s", indent(string(sinksYaml), "  ")))
+	// Add the sections if they have content
+	if len(sourcesConfig) > 0 {
+		configParts = append(configParts, "\n# Sources\nsources:")
+		configParts = append(configParts, sourcesConfig...)
+	}
+	if len(transformsConfig) > 0 {
+		configParts = append(configParts, "\n# Transforms\ntransforms:")
+		configParts = append(configParts, transformsConfig...)
+	}
+	if len(sinksConfig) > 0 {
+		configParts = append(configParts, "\n# Sinks\nsinks:")
+		configParts = append(configParts, sinksConfig...)
 	}
 
 	// Join all parts together
@@ -331,17 +501,6 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 	return r.Update(ctx, existingCM)
 }
 
-// indent adds the specified number of spaces to the start of each line
-func indent(s string, indent string) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		if line != "" {
-			lines[i] = indent + line
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
 // daemonSetForVector returns a vector DaemonSet object
 func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.DaemonSet {
 	ls := labelsForVector(v.Name)
@@ -361,31 +520,123 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: v.Name,
-					Containers: []corev1.Container{{
-						Image: v.Spec.Image,
-						Name:  "vector",
-						Ports: []corev1.ContainerPort{{
-							ContainerPort: 8686,
-							Name:          "api",
-						}},
-						VolumeMounts: []corev1.VolumeMount{
-							{
-								Name:      "var-log",
-								MountPath: "/var/log",
-								ReadOnly:  true,
+					Containers: []corev1.Container{
+						{
+							Image: v.Spec.Image,
+							Name:  "vector",
+							Env: []corev1.EnvVar{
+								{
+									Name: "VECTOR_SELF_NODE_NAME",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											APIVersion: "v1",
+											FieldPath:  "spec.nodeName",
+										},
+									},
+								},
+								{
+									Name: "VECTOR_SELF_POD_NAME",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											APIVersion: "v1",
+											FieldPath:  "metadata.name",
+										},
+									},
+								},
+								{
+									Name: "VECTOR_SELF_POD_NAMESPACE",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											APIVersion: "v1",
+											FieldPath:  "metadata.namespace",
+										},
+									},
+								},
+								{
+									Name:  "PROCFS_ROOT",
+									Value: "/host/proc",
+								},
+								{
+									Name:  "SYSFS_ROOT",
+									Value: "/host/sys",
+								},
 							},
-							{
-								Name:      "config",
-								MountPath: "/etc/vector",
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 8686,
+									Name:          "api",
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "config",
+									MountPath: v.Spec.DataDir,
+								},
+								{
+									Name:      "data",
+									MountPath: "/var/lib/vector",
+								},
+								{
+									Name:      "var-log",
+									MountPath: "/var/log",
+									ReadOnly:  true,
+								},
+								{
+									Name:      "var-lib",
+									MountPath: "/var/lib",
+									ReadOnly:  true,
+								},
+								{
+									Name:      "procfs",
+									MountPath: "/host/proc",
+									ReadOnly:  true,
+								},
+								{
+									Name:      "sysfs",
+									MountPath: "/host/sys",
+									ReadOnly:  true,
+								},
 							},
 						},
-					}},
+					},
 					Volumes: []corev1.Volume{
 						{
 							Name: "var-log",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{
 									Path: "/var/log",
+								},
+							},
+						},
+						{
+							Name: "data",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: "/var/lib/vector",
+								},
+							},
+						},
+						{
+							Name: "var-lib",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: "/var/lib",
+								},
+							},
+						},
+						{
+							Name: "procfs",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: "/proc",
+								},
+							},
+						},
+						{
+							Name: "sysfs",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: "/sys",
 								},
 							},
 						},

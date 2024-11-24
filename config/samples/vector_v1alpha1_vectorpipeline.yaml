@@ -7,10 +7,6 @@ spec:
   sources:
     source1:
       type: "kubernetes_logs"
-      extra_label_selector: "app!=testdeployment"
-    source2:
-      type: "kubernetes_logs"
-      extra_label_selector: "app!=testdeployment1"
   transforms:
     remap:
       type: "remap"
@@ -22,7 +18,7 @@ spec:
     filter:
       type: "filter"
       inputs:
-        - source2
+        - remap
       condition:
         type: "vrl"
         source: ".status != 200"
@@ -33,7 +29,6 @@ spec:
         codec: "json"
       inputs:
         - filter
-        - remap
 ---
 apiVersion: vector.zcentric.com/v1alpha1
 kind: VectorPipeline
@@ -66,10 +61,6 @@ spec:
   sources:
     source1:
       type: "kubernetes_logs"
-      extra_label_selector: "app!=testdeployment"
-    source2:
-      type: "kubernetes_logs"
-      extra_label_selector: "app!=testdeployment1"
   transforms:
     remap:
       type: "remap"
@@ -81,7 +72,7 @@ spec:
     filter:
       type: "filter"
       inputs:
-        - source2
+        - remap
       condition:
         type: "vrl"
         source: ".status != 200"
@@ -92,4 +83,3 @@ spec:
         codec: "json"
       inputs:
         - filter
-        - remap

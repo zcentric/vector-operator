@@ -1,0 +1,17 @@
+apiVersion: vector.zcentric.com/v1alpha1
+kind: VectorPipeline
+metadata:
+  name: vectorpipeline-minimal
+  namespace: vector
+spec:
+  vectorRef: vector-agent-minimal
+  sources:
+    source1:
+      type: "kubernetes_logs"
+  sinks:
+    console:
+      type: "console"
+      encoding:
+        codec: "json"
+      inputs:
+        - source1
