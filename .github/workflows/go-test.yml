@@ -25,6 +25,14 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
+    - name: Install setup-envtest
+      run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
+    - name: Set up Envtest
+      run: |
+        setup-envtest use 1.28.0
+        echo "KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.0 --bin-dir /tmp/envtest -p path)" >> $GITHUB_ENV
+
     - name: Run unit tests
       run: go test -v ./internal/controller/... -coverprofile=coverage.out
 
