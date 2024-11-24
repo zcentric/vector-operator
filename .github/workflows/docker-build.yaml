@@ -40,6 +40,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=edge-${{ github.sha }},enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=pr
 
