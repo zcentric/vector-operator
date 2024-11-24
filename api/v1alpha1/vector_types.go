@@ -47,14 +47,20 @@ type ServiceAccountSpec struct {
 
 // VectorSpec defines the desired state of Vector
 type VectorSpec struct {
-	// Type specifies the type of Vector deployment (e.g., "agent")
+	// Type specifies the type of Vector deployment
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=agent
+	// +kubebuilder:validation:Enum=agent;aggregator
 	Type string `json:"type"`
 
 	// Image specifies the Vector container image to use
 	// +kubebuilder:validation:Required
 	Image string `json:"image"`
+
+	// Replicas is the number of Vector pods to run when using deployment type
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	Replicas int32 `json:"replicas,omitempty"`
 
 	// API configuration for Vector
 	// +optional

@@ -53,7 +53,7 @@ type VectorReconciler struct {
 // +kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors/finalizers,verbs=update
-// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=daemonsets;deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
@@ -99,68 +99,132 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
-	// Handle agent type with DaemonSet
-	if vector.Spec.Type == "agent" {
-		// Create or update the ServiceAccount
-		if err := r.reconcileServiceAccount(ctx, vector); err != nil {
-			logger.Error(err, "Failed to reconcile ServiceAccount")
-			return ctrl.Result{}, err
-		}
+	// Create or update common resources
+	if err := r.reconcileServiceAccount(ctx, vector); err != nil {
+		logger.Error(err, "Failed to reconcile ServiceAccount")
+		return ctrl.Result{}, err
+	}
 
-		// Create or update the ClusterRole and ClusterRoleBinding
-		if err := r.reconcileRBAC(ctx, vector); err != nil {
-			logger.Error(err, "Failed to reconcile RBAC")
-			return ctrl.Result{}, err
-		}
+	if err := r.reconcileRBAC(ctx, vector); err != nil {
+		logger.Error(err, "Failed to reconcile RBAC")
+		return ctrl.Result{}, err
+	}
 
-		// Create or update the ConfigMap
-		if err := r.reconcileConfigMap(ctx, vector); err != nil {
-			logger.Error(err, "Failed to reconcile ConfigMap")
-			return ctrl.Result{}, err
-		}
+	if err := r.reconcileConfigMap(ctx, vector); err != nil {
+		logger.Error(err, "Failed to reconcile ConfigMap")
+		return ctrl.Result{}, err
+	}
 
-		// Check if the daemonset already exists, if not create a new one
-		daemonset := &appsv1.DaemonSet{}
-		err = r.Get(ctx, types.NamespacedName{Name: vector.Name, Namespace: vector.Namespace}, daemonset)
-		if err != nil && errors.IsNotFound(err) {
-			// Define a new daemonset
-			ds := r.daemonSetForVector(vector)
-			logger.Info("Creating a new DaemonSet", "DaemonSet.Namespace", ds.Namespace, "DaemonSet.Name", ds.Name)
-			err = r.Create(ctx, ds)
-			if err != nil {
-				logger.Error(err, "Failed to create new DaemonSet", "DaemonSet.Namespace", ds.Namespace, "DaemonSet.Name", ds.Name)
-				if r.Recorder != nil {
-					r.Recorder.Event(vector, corev1.EventTypeWarning, "Failed", "Failed to create Vector daemonset")
-				}
-				return ctrl.Result{}, err
-			}
+	// Handle different deployment types
+	switch vector.Spec.Type {
+	case "agent":
+		return r.reconcileAgent(ctx, vector)
+	case "aggregator":
+		return r.reconcileAggregator(ctx, vector)
+	default:
+		logger.Error(fmt.Errorf("unknown vector type"), "Invalid vector type", "type", vector.Spec.Type)
+		return ctrl.Result{}, fmt.Errorf("unknown vector type: %s", vector.Spec.Type)
+	}
+}
+
+// reconcileAgent handles the agent type Vector with DaemonSet
+func (r *VectorReconciler) reconcileAgent(ctx context.Context, vector *vectorv1alpha1.Vector) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Check if the daemonset already exists, if not create a new one
+	daemonset := &appsv1.DaemonSet{}
+	err := r.Get(ctx, types.NamespacedName{Name: vector.Name, Namespace: vector.Namespace}, daemonset)
+	if err != nil && errors.IsNotFound(err) {
+		// Define a new daemonset
+		ds := r.daemonSetForVector(vector)
+		logger.Info("Creating a new DaemonSet", "DaemonSet.Namespace", ds.Namespace, "DaemonSet.Name", ds.Name)
+		err = r.Create(ctx, ds)
+		if err != nil {
+			logger.Error(err, "Failed to create new DaemonSet", "DaemonSet.Namespace", ds.Namespace, "DaemonSet.Name", ds.Name)
 			if r.Recorder != nil {
-				r.Recorder.Event(vector, corev1.EventTypeNormal, "Created", "Created Vector daemonset")
+				r.Recorder.Event(vector, corev1.EventTypeWarning, "Failed", "Failed to create Vector daemonset")
 			}
-			return ctrl.Result{Requeue: true}, nil
-		} else if err != nil {
-			logger.Error(err, "Failed to get DaemonSet")
 			return ctrl.Result{}, err
 		}
+		if r.Recorder != nil {
+			r.Recorder.Event(vector, corev1.EventTypeNormal, "Created", "Created Vector daemonset")
+		}
+		return ctrl.Result{Requeue: true}, nil
+	} else if err != nil {
+		logger.Error(err, "Failed to get DaemonSet")
+		return ctrl.Result{}, err
+	}
 
-		// Update daemonset if needed
-		if daemonSetNeedsUpdate(vector, daemonset) {
-			daemonset.Spec.Template.Spec.Containers[0].Image = vector.Spec.Image
-			err = r.Update(ctx, daemonset)
-			if err != nil {
-				logger.Error(err, "Failed to update DaemonSet", "DaemonSet.Namespace", daemonset.Namespace, "DaemonSet.Name", daemonset.Name)
-				return ctrl.Result{}, err
-			}
+	// Update daemonset if needed
+	if daemonSetNeedsUpdate(vector, daemonset) {
+		daemonset.Spec.Template.Spec.Containers[0].Image = vector.Spec.Image
+		err = r.Update(ctx, daemonset)
+		if err != nil {
+			logger.Error(err, "Failed to update DaemonSet", "DaemonSet.Namespace", daemonset.Namespace, "DaemonSet.Name", daemonset.Name)
+			return ctrl.Result{}, err
+		}
+		if r.Recorder != nil {
+			r.Recorder.Event(vector, corev1.EventTypeNormal, "Updated", "Updated Vector daemonset")
+		}
+	}
+
+	// Update the Vector status
+	if err := r.updateVectorStatus(ctx, vector, daemonset); err != nil {
+		logger.Error(err, "Failed to update Vector status")
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{RequeueAfter: time.Minute}, nil
+}
+
+// reconcileAggregator handles the aggregator type Vector with Deployment
+func (r *VectorReconciler) reconcileAggregator(ctx context.Context, vector *vectorv1alpha1.Vector) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Check if the deployment already exists, if not create a new one
+	deployment := &appsv1.Deployment{}
+	err := r.Get(ctx, types.NamespacedName{Name: vector.Name, Namespace: vector.Namespace}, deployment)
+	if err != nil && errors.IsNotFound(err) {
+		// Define a new deployment
+		dep := r.deploymentForVector(vector)
+		logger.Info("Creating a new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+		err = r.Create(ctx, dep)
+		if err != nil {
+			logger.Error(err, "Failed to create new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 			if r.Recorder != nil {
-				r.Recorder.Event(vector, corev1.EventTypeNormal, "Updated", "Updated Vector daemonset")
+				r.Recorder.Event(vector, corev1.EventTypeWarning, "Failed", "Failed to create Vector deployment")
 			}
-		}
-
-		// Update the Vector status
-		if err := r.updateVectorStatus(ctx, vector, daemonset); err != nil {
-			logger.Error(err, "Failed to update Vector status")
 			return ctrl.Result{}, err
 		}
+		if r.Recorder != nil {
+			r.Recorder.Event(vector, corev1.EventTypeNormal, "Created", "Created Vector deployment")
+		}
+		return ctrl.Result{Requeue: true}, nil
+	} else if err != nil {
+		logger.Error(err, "Failed to get Deployment")
+		return ctrl.Result{}, err
+	}
+
+	// Update deployment if needed
+	if deploymentNeedsUpdate(vector, deployment) {
+		deployment.Spec.Template.Spec.Containers[0].Image = vector.Spec.Image
+		if vector.Spec.Replicas > 0 {
+			deployment.Spec.Replicas = &vector.Spec.Replicas
+		}
+		err = r.Update(ctx, deployment)
+		if err != nil {
+			logger.Error(err, "Failed to update Deployment", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
+			return ctrl.Result{}, err
+		}
+		if r.Recorder != nil {
+			r.Recorder.Event(vector, corev1.EventTypeNormal, "Updated", "Updated Vector deployment")
+		}
+	}
+
+	// Update the Vector status
+	if err := r.updateVectorStatus(ctx, vector, deployment); err != nil {
+		logger.Error(err, "Failed to update Vector status")
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
@@ -261,6 +325,16 @@ func (r *VectorReconciler) cleanupResources(ctx context.Context, v *vectorv1alph
 	if err == nil {
 		logger.Info("Deleting DaemonSet", "name", ds.Name)
 		if err := r.Delete(ctx, ds); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// Delete Deployment if it exists
+	dep := &appsv1.Deployment{}
+	err = r.Get(ctx, types.NamespacedName{Name: v.Name, Namespace: v.Namespace}, dep)
+	if err == nil {
+		logger.Info("Deleting Deployment", "name", dep.Name)
+		if err := r.Delete(ctx, dep); err != nil && !errors.IsNotFound(err) {
 			return err
 		}
 	}
@@ -501,168 +575,6 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 	return r.Update(ctx, existingCM)
 }
 
-// daemonSetForVector returns a vector DaemonSet object
-func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.DaemonSet {
-	ls := labelsForVector(v.Name)
-
-	ds := &appsv1.DaemonSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      v.Name,
-			Namespace: v.Namespace,
-		},
-		Spec: appsv1.DaemonSetSpec{
-			Selector: &metav1.LabelSelector{
-				MatchLabels: ls,
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: ls,
-				},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: v.Name,
-					Containers: []corev1.Container{
-						{
-							Image: v.Spec.Image,
-							Name:  "vector",
-							Env: []corev1.EnvVar{
-								{
-									Name: "VECTOR_SELF_NODE_NAME",
-									ValueFrom: &corev1.EnvVarSource{
-										FieldRef: &corev1.ObjectFieldSelector{
-											APIVersion: "v1",
-											FieldPath:  "spec.nodeName",
-										},
-									},
-								},
-								{
-									Name: "VECTOR_SELF_POD_NAME",
-									ValueFrom: &corev1.EnvVarSource{
-										FieldRef: &corev1.ObjectFieldSelector{
-											APIVersion: "v1",
-											FieldPath:  "metadata.name",
-										},
-									},
-								},
-								{
-									Name: "VECTOR_SELF_POD_NAMESPACE",
-									ValueFrom: &corev1.EnvVarSource{
-										FieldRef: &corev1.ObjectFieldSelector{
-											APIVersion: "v1",
-											FieldPath:  "metadata.namespace",
-										},
-									},
-								},
-								{
-									Name:  "PROCFS_ROOT",
-									Value: "/host/proc",
-								},
-								{
-									Name:  "SYSFS_ROOT",
-									Value: "/host/sys",
-								},
-							},
-							Ports: []corev1.ContainerPort{
-								{
-									ContainerPort: 8686,
-									Name:          "api",
-								},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "config",
-									MountPath: v.Spec.DataDir,
-								},
-								{
-									Name:      "data",
-									MountPath: "/var/lib/vector",
-								},
-								{
-									Name:      "var-log",
-									MountPath: "/var/log",
-									ReadOnly:  true,
-								},
-								{
-									Name:      "var-lib",
-									MountPath: "/var/lib",
-									ReadOnly:  true,
-								},
-								{
-									Name:      "procfs",
-									MountPath: "/host/proc",
-									ReadOnly:  true,
-								},
-								{
-									Name:      "sysfs",
-									MountPath: "/host/sys",
-									ReadOnly:  true,
-								},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "var-log",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/var/log",
-								},
-							},
-						},
-						{
-							Name: "data",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/var/lib/vector",
-								},
-							},
-						},
-						{
-							Name: "var-lib",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/var/lib",
-								},
-							},
-						},
-						{
-							Name: "procfs",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/proc",
-								},
-							},
-						},
-						{
-							Name: "sysfs",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/sys",
-								},
-							},
-						},
-						{
-							Name: "config",
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: v.Name + "-config",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	// Set Vector instance as the owner and controller
-	if err := ctrl.SetControllerReference(v, ds, r.Scheme); err != nil {
-		return nil
-	}
-	return ds
-}
-
 // labelsForVector returns the labels for selecting the resources
 func labelsForVector(name string) map[string]string {
 	return map[string]string{
@@ -672,30 +584,33 @@ func labelsForVector(name string) map[string]string {
 	}
 }
 
-// daemonSetNeedsUpdate returns true if the daemonset needs to be updated
-func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.DaemonSet) bool {
-	if len(daemonset.Spec.Template.Spec.Containers) == 0 {
-		return true
-	}
-	return daemonset.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image
-}
-
 // updateVectorStatus updates the Status field of the Vector resource
-func (r *VectorReconciler) updateVectorStatus(ctx context.Context, vector *vectorv1alpha1.Vector, daemonset *appsv1.DaemonSet) error {
-	// Update the status condition based on the daemonset status
+func (r *VectorReconciler) updateVectorStatus(ctx context.Context, vector *vectorv1alpha1.Vector, obj runtime.Object) error {
+	// Update the status condition based on the object type and status
 	condition := metav1.Condition{
 		Type:               "Available",
 		Status:             metav1.ConditionTrue,
-		Reason:             "DaemonSetAvailable",
-		Message:            "Vector daemonset is available",
 		LastTransitionTime: metav1.Now(),
 		ObservedGeneration: vector.Generation,
 	}
 
-	if daemonset.Status.NumberReady == 0 {
-		condition.Status = metav1.ConditionFalse
-		condition.Reason = "DaemonSetUnavailable"
-		condition.Message = "Vector daemonset is not available"
+	switch v := obj.(type) {
+	case *appsv1.DaemonSet:
+		condition.Reason = "DaemonSetAvailable"
+		condition.Message = "Vector daemonset is available"
+		if v.Status.NumberReady == 0 {
+			condition.Status = metav1.ConditionFalse
+			condition.Reason = "DaemonSetUnavailable"
+			condition.Message = "Vector daemonset is not available"
+		}
+	case *appsv1.Deployment:
+		condition.Reason = "DeploymentAvailable"
+		condition.Message = "Vector deployment is available"
+		if v.Status.ReadyReplicas == 0 {
+			condition.Status = metav1.ConditionFalse
+			condition.Reason = "DeploymentUnavailable"
+			condition.Message = "Vector deployment is not available"
+		}
 	}
 
 	// Update the condition
@@ -718,6 +633,7 @@ func (r *VectorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&vectorv1alpha1.Vector{}).
 		Owns(&appsv1.DaemonSet{}).
+		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.ServiceAccount{}).
 		Complete(r)

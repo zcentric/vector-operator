@@ -29,3 +29,13 @@ spec:
   serviceAccount:
     annotations:
       eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/vector-role"  # Example AWS IRSA annotation
+---
+# Minimal aggregator example
+apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-aggregator
+  namespace: vector
+spec:
+  type: aggregator
+  image: "timberio/vector:0.38.0-distroless-libc"

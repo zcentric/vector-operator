@@ -17,6 +17,17 @@ rules:
   resources:
   - daemonsets
   verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  verbs:
   - create
   - delete
   - get

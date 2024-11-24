@@ -79,6 +79,13 @@ spec:
               image:
                 description: Image specifies the Vector container image to use
                 type: string
+              replicas:
+                default: 1
+                description: Replicas is the number of Vector pods to run when using
+                  deployment type
+                format: int32
+                minimum: 0
+                type: integer
               serviceAccount:
                 description: ServiceAccount configuration for Vector
                 properties:
@@ -89,9 +96,10 @@ spec:
                     type: object
                 type: object
               type:
-                description: Type specifies the type of Vector deployment (e.g., "agent")
+                description: Type specifies the type of Vector deployment
                 enum:
                 - agent
+                - aggregator
                 type: string
             required:
             - image
