@@ -1,0 +1,32 @@
+
+apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-aggregator-complete
+spec:
+  type: aggregator
+  image: "timberio/vector:0.38.0-distroless-libc"
+  # Optional deployment configuration
+  replicas: 1               # Default value is 1
+  # Optional API configuration
+  api:
+    address: "0.0.0.0:8686"  # Default value
+    enabled: true            # Enable API for monitoring
+    playground: true         # Enable GraphQL playground for testing
+  # Optional Vector configuration
+  data_dir: "/tmp/vector-data-dir"  # Default value
+  expire_metrics_secs: 30           # Default value
+  # Optional ServiceAccount configuration
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/vector-role"  # Example AWS IRSA annotation
+  # Optional tolerations configuration
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "vector-aggregator"
+      effect: "NoSchedule"
+    - key: "node.kubernetes.io/disk-pressure"
+      operator: "Exists"
+      effect: "NoExecute"
+      tolerationSeconds: 3600

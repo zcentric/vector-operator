@@ -1,0 +1,77 @@
+
+# Complete agent example with all optional fields
+apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-agent-complete
+spec:
+  type: agent
+  image: "timberio/vector:0.38.0-distroless-libc"
+  # Optional API configuration
+  api:
+    address: "0.0.0.0:8686"  # Default value
+    enabled: false           # Default value
+    playground: false        # Default value
+  # Optional Vector configuration
+  data_dir: "/tmp/vector-data-dir"  # Default value
+  expire_metrics_secs: 30           # Default value
+  # Optional ServiceAccount configuration
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/vector-role"  # Example AWS IRSA annotation
+  # Optional tolerations configuration
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "example.com/workload-type"
+      operator: "Equal"
+      value: "logging"
+      effect: "NoSchedule"
+---
+
+apiVersion: vector.zcentric.com/v1alpha1
+kind: VectorPipeline
+metadata:
+  name: vectorpipeline-sample
+spec:
+  vectorRef: vector-agent-complete
+  sources:
+    source1:
+      type: "kubernetes_logs"
+  transforms:
+    remap:
+      type: "remap"
+      inputs:
+        - source1
+      source: |
+        .@timestamp = del(.timestamp)
+        .testField = "testValuevalue"
+    filter:
+      type: "filter"
+      inputs:
+        - remap
+      condition:
+        type: "vrl"
+        source: ".status != 200"
+  sinks:
+    test222:
+      type: "console"
+      encoding:
+        codec: "json"
+      inputs:
+        - filter
+---
+apiVersion: vector.zcentric.com/v1alpha1
+kind: VectorPipeline
+metadata:
+  name: vectorpipeline-team2
+spec:
+  vectorRef: vector-agent-complete
+  transforms:
+    config:
+      type: "remap"
+      inputs:
+        - source1
+      source: |
+        .merged = "config"

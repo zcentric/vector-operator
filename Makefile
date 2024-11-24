@@ -177,9 +177,13 @@ ifndef ignore-not-found
   ignore-not-found = false
 endif
 
-.PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
+.PHONY: install-crds
+install-crds: manifests kustomize 
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
+
+.PHONY: install-samples
+install-samples: manifests kustomize
+	$(KUSTOMIZE) build config/samples | $(KUBECTL) apply -f -
 
 .PHONY: uninstall
 uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.

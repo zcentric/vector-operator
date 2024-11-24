@@ -49,6 +49,7 @@ func (r *VectorReconciler) deploymentForVector(v *vectorv1alpha1.Vector) *appsv1
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: v.Name,
+					Tolerations:        v.Spec.Tolerations,
 					Containers: []corev1.Container{
 						{
 							Image: v.Spec.Image,
@@ -115,6 +116,17 @@ func deploymentNeedsUpdate(vector *vectorv1alpha1.Vector, deployment *appsv1.Dep
 	targetReplicas := vector.Spec.Replicas
 	if targetReplicas == 0 {
 		targetReplicas = 1
+	}
+
+	// Check if tolerations have changed
+	currentTolerations := deployment.Spec.Template.Spec.Tolerations
+	if len(currentTolerations) != len(vector.Spec.Tolerations) {
+		return true
+	}
+	for i, toleration := range currentTolerations {
+		if i >= len(vector.Spec.Tolerations) || toleration != vector.Spec.Tolerations[i] {
+			return true
+		}
 	}
 
 	return deployment.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image ||

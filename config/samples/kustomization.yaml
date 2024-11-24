@@ -1,6 +1,7 @@
 ## Append samples of your project ##
 resources:
-- vector_v1alpha1_vector.yaml
-- vector_v1alpha1_vectorpipeline.yaml
-- test_vectorpipeline.yaml
+- vector-agent-minimal.yaml
+- vector-aggregator-minimal.yaml
+- vector-agent-complete.yaml
+- vector-aggregator-complete.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

@@ -44,6 +44,7 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: v.Name,
+					Tolerations:        v.Spec.Tolerations,
 					Containers: []corev1.Container{
 						{
 							Image: v.Spec.Image,
@@ -192,5 +193,17 @@ func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.Daemo
 	if len(daemonset.Spec.Template.Spec.Containers) == 0 {
 		return true
 	}
+
+	// Check if tolerations have changed
+	currentTolerations := daemonset.Spec.Template.Spec.Tolerations
+	if len(currentTolerations) != len(vector.Spec.Tolerations) {
+		return true
+	}
+	for i, toleration := range currentTolerations {
+		if i >= len(vector.Spec.Tolerations) || toleration != vector.Spec.Tolerations[i] {
+			return true
+		}
+	}
+
 	return daemonset.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image
 }

@@ -1,8 +1,15 @@
 apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-agent-minimal
+spec:
+  type: agent
+  image: "timberio/vector:0.38.0-distroless-libc"
+---
+apiVersion: vector.zcentric.com/v1alpha1
 kind: VectorPipeline
 metadata:
   name: vectorpipeline-minimal
-  namespace: vector
 spec:
   vectorRef: vector-agent-minimal
   sources:
