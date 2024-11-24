@@ -8,12 +8,13 @@ A Kubernetes operator that simplifies the deployment and management of [Vector](
 
 The Vector Operator provides two custom resources:
 
-- **Vector**: Manages the deployment and configuration of Vector agents in your cluster
+- **Vector**: Manages the deployment of Vector instances in your cluster, supporting both agent (DaemonSet) and aggregator (Deployment) types
 - **VectorPipeline**: Defines observability data pipelines with sources, transforms, and sinks
 
 Key features:
 
-- Declarative configuration of Vector agents
+- Declarative configuration of Vector instances
+- Support for both agent (per-node) and aggregator (centralized) deployment types
 - Pipeline management with support for multiple sources, transforms, and sinks
 - Kubernetes-native deployment and management
 - Automatic configuration updates and reconciliation
@@ -35,7 +36,9 @@ Key features:
 kubectl apply -f https://raw.githubusercontent.com/zcentric/vector-operator/main/dist/install.yaml
 ```
 
-2. Create a Vector agent:
+2. Create a Vector instance:
+
+For an agent (runs on every node):
 
 ```yaml
 apiVersion: vector.zcentric.com/v1alpha1
@@ -44,9 +47,22 @@ metadata:
   name: vector-agent
   namespace: vector
 spec:
-  agent:
-    type: agent
-    image: "timberio/vector:0.38.0-distroless-libc"
+  type: agent
+  image: "timberio/vector:0.38.0-distroless-libc"
+```
+
+Or for an aggregator (centralized processing):
+
+```yaml
+apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-aggregator
+  namespace: vector
+spec:
+  type: aggregator
+  image: "timberio/vector:0.38.0-distroless-libc"
+  replicas: 2 # optional, defaults to 1
 ```
 
 3. Define a pipeline:
@@ -78,7 +94,11 @@ spec:
 
 ## Usage Examples
 
-### Basic Vector Agent Configuration
+### Vector Deployment Types
+
+#### Agent Configuration (DaemonSet)
+
+Use the agent type when you need to collect logs and metrics from every node in your cluster:
 
 ```yaml
 apiVersion: vector.zcentric.com/v1alpha1
@@ -86,14 +106,33 @@ kind: Vector
 metadata:
   name: vector-agent
 spec:
-  agent:
-    type: agent
-    image: "timberio/vector:0.38.0-distroless-libc"
-    api:
-      enabled: true
-      address: "0.0.0.0:8686"
-    data_dir: "/vector-data"
-    expire_metrics_secs: 30
+  type: agent
+  image: "timberio/vector:0.38.0-distroless-libc"
+  api:
+    enabled: true
+    address: "0.0.0.0:8686"
+  data_dir: "/vector-data"
+  expire_metrics_secs: 30
+```
+
+#### Aggregator Configuration (Deployment)
+
+Use the aggregator type when you need centralized log processing and aggregation:
+
+```yaml
+apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-aggregator
+spec:
+  type: aggregator
+  image: "timberio/vector:0.38.0-distroless-libc"
+  replicas: 2
+  api:
+    enabled: true
+    address: "0.0.0.0:8686"
+  data_dir: "/vector-data"
+  expire_metrics_secs: 30
 ```
 
 ### Pipeline with Multiple Sources and Transforms
@@ -129,6 +168,18 @@ spec:
       type: "elasticsearch"
       inputs: ["filter-errors", "add-metadata"]
 ```
+
+### Common Deployment Patterns
+
+1. **Log Collection and Forwarding**:
+
+   - Deploy a Vector agent (DaemonSet) to collect logs from all nodes
+   - Deploy a Vector aggregator (Deployment) to receive and process logs centrally
+   - Configure agents to forward to the aggregator
+
+2. **High Availability Aggregation**:
+   - Deploy multiple Vector aggregator replicas for redundancy
+   - Use load balancing for even distribution of log processing
 
 ## Contributing
 
