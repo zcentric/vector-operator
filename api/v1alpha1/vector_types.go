@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -43,6 +44,13 @@ type ServiceAccountSpec struct {
 	// Annotations to be added to the ServiceAccount
 	// +optional
 	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// AgentSpec defines the configuration for Vector when running as an agent
+type AgentSpec struct {
+	// Tolerations allows you to schedule Vector pods onto nodes with matching taints
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 }
 
 // VectorSpec defines the desired state of Vector
@@ -79,6 +87,10 @@ type VectorSpec struct {
 	// ServiceAccount configuration for Vector
 	// +optional
 	ServiceAccount *ServiceAccountSpec `json:"serviceAccount,omitempty"`
+
+	// Agent configuration for Vector when running as an agent
+	// +optional
+	Agent *AgentSpec `json:"agent,omitempty"`
 }
 
 // VectorStatus defines the observed state of Vector

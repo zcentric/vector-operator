@@ -29,6 +29,19 @@ import (
 func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.DaemonSet {
 	ls := labelsForVector(v.Name)
 
+	// Define default toleration
+	defaultToleration := []corev1.Toleration{
+		{
+			Operator: corev1.TolerationOpExists,
+		},
+	}
+
+	// Use custom tolerations if specified, otherwise use default
+	tolerations := defaultToleration
+	if v.Spec.Agent != nil && len(v.Spec.Agent.Tolerations) > 0 {
+		tolerations = v.Spec.Agent.Tolerations
+	}
+
 	ds := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      v.Name,
@@ -44,6 +57,7 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: v.Name,
+					Tolerations:        tolerations,
 					Containers: []corev1.Container{
 						{
 							Image: v.Spec.Image,
@@ -192,5 +206,36 @@ func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.Daemo
 	if len(daemonset.Spec.Template.Spec.Containers) == 0 {
 		return true
 	}
-	return daemonset.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image
+	return daemonset.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image ||
+		!tolerationsEqual(daemonset.Spec.Template.Spec.Tolerations, getTolerations(vector))
+}
+
+// tolerationsEqual compares two slices of tolerations
+func tolerationsEqual(a, b []corev1.Toleration) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Key != b[i].Key ||
+			a[i].Operator != b[i].Operator ||
+			a[i].Value != b[i].Value ||
+			a[i].Effect != b[i].Effect {
+			return false
+		}
+	}
+	return true
+}
+
+// getTolerations returns the tolerations to use for the DaemonSet
+func getTolerations(vector *vectorv1alpha1.Vector) []corev1.Toleration {
+	defaultToleration := []corev1.Toleration{
+		{
+			Operator: corev1.TolerationOpExists,
+		},
+	}
+
+	if vector.Spec.Agent != nil && len(vector.Spec.Agent.Tolerations) > 0 {
+		return vector.Spec.Agent.Tolerations
+	}
+	return defaultToleration
 }
