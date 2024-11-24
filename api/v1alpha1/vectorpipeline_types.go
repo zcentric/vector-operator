@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
 // VectorPipelineSpec defines the desired state of VectorPipeline
@@ -28,18 +29,21 @@ type VectorPipelineSpec struct {
 
 	// Sources defines the Vector sources configuration
 	// +optional
+	// +kubebuilder:validation:Type=object
 	// +kubebuilder:pruning:PreserveUnknownFields
-	Sources map[string]Source `json:"sources,omitempty"`
+	Sources runtime.RawExtension `json:"sources,omitempty"`
 
 	// Transforms defines the Vector transforms configuration
 	// +optional
+	// +kubebuilder:validation:Type=object
 	// +kubebuilder:pruning:PreserveUnknownFields
-	Transforms map[string]Transform `json:"transforms,omitempty"`
+	Transforms runtime.RawExtension `json:"transforms,omitempty"`
 
 	// Sinks defines the Vector sinks configuration
 	// +optional
+	// +kubebuilder:validation:Type=object
 	// +kubebuilder:pruning:PreserveUnknownFields
-	Sinks map[string]Sink `json:"sinks,omitempty"`
+	Sinks runtime.RawExtension `json:"sinks,omitempty"`
 }
 
 // VectorPipelineStatus defines the observed state of VectorPipeline

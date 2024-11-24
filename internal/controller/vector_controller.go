@@ -18,9 +18,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
-	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/yaml"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
 )
@@ -125,6 +126,134 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		logger.Error(fmt.Errorf("unknown vector type"), "Invalid vector type", "type", vector.Spec.Type)
 		return ctrl.Result{}, fmt.Errorf("unknown vector type: %s", vector.Spec.Type)
 	}
+}
+
+// reconcileConfigMap creates or updates the Vector ConfigMap
+func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1alpha1.Vector) error {
+	logger := log.FromContext(ctx)
+
+	// Build the configuration sections
+	configData := make(map[string]interface{})
+
+	// Add global options
+	configData["data_dir"] = "/var/lib/vector"
+
+	// Add API configuration
+	apiConfig := map[string]interface{}{
+		"enabled": false,
+	}
+	if v.Spec.API != nil {
+		apiConfig["enabled"] = *v.Spec.API.Enabled
+		if v.Spec.API.Address != "" {
+			apiConfig["address"] = v.Spec.API.Address
+		}
+	}
+	configData["api"] = apiConfig
+
+	// Get all VectorPipelines that reference this Vector
+	var pipelineList vectorv1alpha1.VectorPipelineList
+	if err := r.List(ctx, &pipelineList, client.InNamespace(v.Namespace)); err != nil {
+		return err
+	}
+
+	// Initialize sources, transforms, and sinks maps
+	sources := make(map[string]interface{})
+	transforms := make(map[string]interface{})
+	sinks := make(map[string]interface{})
+
+	// Add sources, transforms, and sinks from each pipeline
+	for _, pipeline := range pipelineList.Items {
+		if pipeline.Spec.VectorRef == v.Name {
+			// Process Sources
+			if pipeline.Spec.Sources.Raw != nil {
+				var sourcesMap map[string]interface{}
+				if err := json.Unmarshal(pipeline.Spec.Sources.Raw, &sourcesMap); err != nil {
+					logger.Error(err, "Failed to unmarshal Sources")
+					continue
+				}
+				for k, v := range sourcesMap {
+					sources[k] = v
+				}
+			}
+
+			// Process Transforms
+			if pipeline.Spec.Transforms.Raw != nil {
+				var transformsMap map[string]interface{}
+				if err := json.Unmarshal(pipeline.Spec.Transforms.Raw, &transformsMap); err != nil {
+					logger.Error(err, "Failed to unmarshal Transforms")
+					continue
+				}
+				for k, v := range transformsMap {
+					transforms[k] = v
+				}
+			}
+
+			// Process Sinks
+			if pipeline.Spec.Sinks.Raw != nil {
+				var sinksMap map[string]interface{}
+				if err := json.Unmarshal(pipeline.Spec.Sinks.Raw, &sinksMap); err != nil {
+					logger.Error(err, "Failed to unmarshal Sinks")
+					continue
+				}
+				for k, v := range sinksMap {
+					sinks[k] = v
+				}
+			}
+		}
+	}
+
+	// Add the sections if they have content
+	if len(sources) > 0 {
+		configData["sources"] = sources
+	}
+	if len(transforms) > 0 {
+		configData["transforms"] = transforms
+	}
+	if len(sinks) > 0 {
+		configData["sinks"] = sinks
+	}
+
+	// Convert to YAML
+	configYAML, err := yaml.Marshal(configData)
+	if err != nil {
+		return err
+	}
+
+	// Create or update ConfigMap
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      v.Name + "-config",
+			Namespace: v.Namespace,
+		},
+		Data: map[string]string{
+			"vector.yaml": string(configYAML),
+		},
+	}
+
+	// Set Vector instance as the owner
+	if err := ctrl.SetControllerReference(v, cm, r.Scheme); err != nil {
+		return err
+	}
+
+	// Create or update the ConfigMap
+	existingCM := &corev1.ConfigMap{}
+	err = r.Get(ctx, types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}, existingCM)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating new ConfigMap",
+				"name", cm.Name,
+				"namespace", cm.Namespace)
+			return r.Create(ctx, cm)
+		}
+		return err
+	}
+
+	logger.Info("Updating existing ConfigMap",
+		"name", existingCM.Name,
+		"namespace", existingCM.Namespace)
+
+	existingCM.Data = cm.Data
+	return r.Update(ctx, existingCM)
 }
 
 // reconcileAgent handles the agent type Vector with DaemonSet
@@ -428,151 +557,6 @@ func (r *VectorReconciler) reconcileServiceAccount(ctx context.Context, v *vecto
 	}
 
 	return nil
-}
-
-// reconcileConfigMap creates or updates the Vector ConfigMap
-func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1alpha1.Vector) error {
-	logger := log.FromContext(ctx)
-
-	// Build the configuration sections
-	var configParts []string
-
-	// Add global options
-	configParts = append(configParts, "# Set global options", fmt.Sprintf("data_dir: \"%s\"", "/var/lib/vector"))
-
-	// Add API configuration
-	configParts = append(configParts, "\n# Vector's API (disabled by default)", "# Enable and try it out with the 'vector top' command")
-	if v.Spec.API != nil {
-		apiConfig := fmt.Sprintf("api:\n  enabled: %v", *v.Spec.API.Enabled)
-		if v.Spec.API.Address != "" {
-			apiConfig += fmt.Sprintf("\n  address: \"%s\"", v.Spec.API.Address)
-		}
-		configParts = append(configParts, apiConfig)
-	} else {
-		configParts = append(configParts, "api:\n  enabled: false")
-	}
-
-	// Get all VectorPipelines that reference this Vector
-	var pipelineList vectorv1alpha1.VectorPipelineList
-	if err := r.List(ctx, &pipelineList, client.InNamespace(v.Namespace)); err != nil {
-		return err
-	}
-
-	// Initialize sources, transforms, and sinks sections
-	var sourcesConfig []string
-	var transformsConfig []string
-	var sinksConfig []string
-
-	// Add sources, transforms, and sinks from each pipeline
-	for _, pipeline := range pipelineList.Items {
-		if pipeline.Spec.VectorRef == v.Name {
-			// Add sources
-			for name, source := range pipeline.Spec.Sources {
-				sourceConfig := fmt.Sprintf("  %s:\n    type: %s", name, source.Type)
-				if source.ExtraLabelSelector != "" {
-					sourceConfig += fmt.Sprintf("\n    extra_label_selector: \"%s\"", source.ExtraLabelSelector)
-				}
-				if source.Config.Raw != nil {
-					sourceConfig += fmt.Sprintf("\n    %s", strings.ReplaceAll(strings.TrimSpace(string(source.Config.Raw)), "\n", "\n    "))
-				}
-				sourcesConfig = append(sourcesConfig, sourceConfig)
-			}
-
-			// Add transforms
-			for name, transform := range pipeline.Spec.Transforms {
-				transformConfig := fmt.Sprintf("  %s:\n    type: %s\n    inputs: [%s]",
-					name,
-					transform.Type,
-					strings.Join(transform.Inputs, ", "))
-
-				// Handle source field with proper YAML formatting
-				if transform.Source != "" {
-					transformConfig += "\n    source: |"
-					for _, line := range strings.Split(transform.Source, "\n") {
-						transformConfig += fmt.Sprintf("\n      %s", line)
-					}
-				}
-
-				if transform.Condition != nil {
-					transformConfig += fmt.Sprintf("\n    condition:\n      type: %s\n      source: \"%s\"",
-						transform.Condition.Type,
-						transform.Condition.Source)
-				}
-				if transform.Config.Raw != nil {
-					transformConfig += fmt.Sprintf("\n    %s", strings.ReplaceAll(strings.TrimSpace(string(transform.Config.Raw)), "\n", "\n    "))
-				}
-				transformsConfig = append(transformsConfig, transformConfig)
-			}
-
-			// Add sinks
-			for name, sink := range pipeline.Spec.Sinks {
-				sinkConfig := fmt.Sprintf("  %s:\n    type: %s\n    inputs: [%s]",
-					name,
-					sink.Type,
-					strings.Join(sink.Inputs, ", "))
-				if sink.Encoding != nil {
-					sinkConfig += fmt.Sprintf("\n    encoding:\n      codec: %s", sink.Encoding.Codec)
-				}
-				if sink.Config.Raw != nil {
-					sinkConfig += fmt.Sprintf("\n    %s", strings.ReplaceAll(strings.TrimSpace(string(sink.Config.Raw)), "\n", "\n    "))
-				}
-				sinksConfig = append(sinksConfig, sinkConfig)
-			}
-		}
-	}
-
-	// Add the sections if they have content
-	if len(sourcesConfig) > 0 {
-		configParts = append(configParts, "\n# Sources\nsources:")
-		configParts = append(configParts, sourcesConfig...)
-	}
-	if len(transformsConfig) > 0 {
-		configParts = append(configParts, "\n# Transforms\ntransforms:")
-		configParts = append(configParts, transformsConfig...)
-	}
-	if len(sinksConfig) > 0 {
-		configParts = append(configParts, "\n# Sinks\nsinks:")
-		configParts = append(configParts, sinksConfig...)
-	}
-
-	// Join all parts together
-	configStr := strings.Join(configParts, "\n")
-
-	// Create or update ConfigMap
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      v.Name + "-config",
-			Namespace: v.Namespace,
-		},
-		Data: map[string]string{
-			"vector.yaml": configStr,
-		},
-	}
-
-	// Set Vector instance as the owner
-	if err := ctrl.SetControllerReference(v, cm, r.Scheme); err != nil {
-		return err
-	}
-
-	// Create or update the ConfigMap
-	existingCM := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}, existingCM)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			logger.Info("Creating new ConfigMap",
-				"name", cm.Name,
-				"namespace", cm.Namespace)
-			return r.Create(ctx, cm)
-		}
-		return err
-	}
-
-	logger.Info("Updating existing ConfigMap",
-		"name", existingCM.Name,
-		"namespace", existingCM.Namespace)
-
-	existingCM.Data = cm.Data
-	return r.Update(ctx, existingCM)
 }
 
 // labelsForVector returns the labels for selecting the resources

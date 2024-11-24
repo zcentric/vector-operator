@@ -35,24 +35,35 @@ var _ = Describe("VectorPipeline E2E", func() {
 			Expect(k8sClient.Create(ctx, vector)).Should(Succeed())
 
 			By("Creating a VectorPipeline with a complete configuration")
-			sourceConfig := map[string]interface{}{
-				"include": []string{"/var/log/apache2/*.log"},
-				"type":    "apache_common",
+			sources := map[string]interface{}{
+				"apache_logs": map[string]interface{}{
+					"type":    "file",
+					"include": []string{"/var/log/apache2/*.log"},
+					"format":  "apache_common",
+				},
 			}
-			sourceConfigJSON, err := json.Marshal(sourceConfig)
+			sourcesJSON, err := json.Marshal(sources)
 			Expect(err).ShouldNot(HaveOccurred())
 
-			transformConfig := map[string]interface{}{
-				"source": `. = parse_apache_log(.)`,
+			transforms := map[string]interface{}{
+				"parse_logs": map[string]interface{}{
+					"type":   "remap",
+					"inputs": []string{"apache_logs"},
+					"source": ". = parse_apache_log(.)",
+				},
 			}
-			transformConfigJSON, err := json.Marshal(transformConfig)
+			transformsJSON, err := json.Marshal(transforms)
 			Expect(err).ShouldNot(HaveOccurred())
 
-			sinkConfig := map[string]interface{}{
-				"endpoints": []string{"http://elasticsearch:9200"},
-				"index":     "vector-logs-%F",
+			sinks := map[string]interface{}{
+				"elasticsearch_out": map[string]interface{}{
+					"type":      "elasticsearch",
+					"inputs":    []string{"parse_logs"},
+					"endpoints": []string{"http://elasticsearch:9200"},
+					"index":     "vector-logs-%F",
+				},
 			}
-			sinkConfigJSON, err := json.Marshal(sinkConfig)
+			sinksJSON, err := json.Marshal(sinks)
 			Expect(err).ShouldNot(HaveOccurred())
 
 			pipeline := &vectorv1alpha1.VectorPipeline{
@@ -62,29 +73,14 @@ var _ = Describe("VectorPipeline E2E", func() {
 				},
 				Spec: vectorv1alpha1.VectorPipelineSpec{
 					VectorRef: "e2e-vector",
-					Sources: map[string]vectorv1alpha1.Source{
-						"apache_logs": {
-							Type: "file",
-							Config: runtime.RawExtension{
-								Raw: sourceConfigJSON,
-							},
-						},
+					Sources: runtime.RawExtension{
+						Raw: sourcesJSON,
 					},
-					Transforms: map[string]vectorv1alpha1.Transform{
-						"parse_logs": {
-							Type: "remap",
-							Config: runtime.RawExtension{
-								Raw: transformConfigJSON,
-							},
-						},
+					Transforms: runtime.RawExtension{
+						Raw: transformsJSON,
 					},
-					Sinks: map[string]vectorv1alpha1.Sink{
-						"elasticsearch_out": {
-							Type: "elasticsearch",
-							Config: runtime.RawExtension{
-								Raw: sinkConfigJSON,
-							},
-						},
+					Sinks: runtime.RawExtension{
+						Raw: sinksJSON,
 					},
 				},
 			}
@@ -108,7 +104,7 @@ var _ = Describe("VectorPipeline E2E", func() {
 			}, timeout, interval).Should(BeTrue())
 
 			By("Verifying the generated ConfigMap")
-			configMapLookupKey := types.NamespacedName{Name: "e2e-vector", Namespace: "default"}
+			configMapLookupKey := types.NamespacedName{Name: "e2e-vector-config", Namespace: "default"}
 			createdConfigMap := &corev1.ConfigMap{}
 
 			Eventually(func() error {
@@ -124,13 +120,13 @@ var _ = Describe("VectorPipeline E2E", func() {
 			Expect(parsedConfig).Should(HaveKey("transforms"))
 			Expect(parsedConfig).Should(HaveKey("sinks"))
 
-			sources := parsedConfig["sources"].(map[string]interface{})
+			sources = parsedConfig["sources"].(map[string]interface{})
 			Expect(sources).Should(HaveKey("apache_logs"))
 
-			transforms := parsedConfig["transforms"].(map[string]interface{})
+			transforms = parsedConfig["transforms"].(map[string]interface{})
 			Expect(transforms).Should(HaveKey("parse_logs"))
 
-			sinks := parsedConfig["sinks"].(map[string]interface{})
+			sinks = parsedConfig["sinks"].(map[string]interface{})
 			Expect(sinks).Should(HaveKey("elasticsearch_out"))
 		})
 	})

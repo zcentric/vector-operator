@@ -24,6 +24,7 @@ var _ = Describe("VectorPipeline Controller", func() {
 		VectorPipelineName = "test-pipeline"
 		VectorName         = "test-vector"
 		Namespace          = "default"
+		VectorRefCondition = "VectorRefValid"
 	)
 
 	Context("When creating a VectorPipeline", func() {
@@ -31,10 +32,13 @@ var _ = Describe("VectorPipeline Controller", func() {
 
 		It("Should properly handle Vector reference validation", func() {
 			By("Creating a new VectorPipeline without Vector")
-			sourceConfig := map[string]interface{}{
-				"path": "/var/log/test.log",
+			sources := map[string]interface{}{
+				"test-source": map[string]interface{}{
+					"type": "file",
+					"path": "/var/log/test.log",
+				},
 			}
-			sourceConfigJSON, err := json.Marshal(sourceConfig)
+			sourcesJSON, err := json.Marshal(sources)
 			Expect(err).ShouldNot(HaveOccurred())
 
 			pipeline := &vectorv1alpha1.VectorPipeline{
@@ -44,13 +48,8 @@ var _ = Describe("VectorPipeline Controller", func() {
 				},
 				Spec: vectorv1alpha1.VectorPipelineSpec{
 					VectorRef: VectorName,
-					Sources: map[string]vectorv1alpha1.Source{
-						"test-source": {
-							Type: "file",
-							Config: runtime.RawExtension{
-								Raw: sourceConfigJSON,
-							},
-						},
+					Sources: runtime.RawExtension{
+						Raw: sourcesJSON,
 					},
 				},
 			}
@@ -99,16 +98,22 @@ var _ = Describe("VectorPipeline Controller", func() {
 
 		It("Should create ConfigMap with merged pipeline configurations", func() {
 			By("Creating multiple pipelines with the same Vector reference")
-			sourceConfig1 := map[string]interface{}{
-				"path": "/var/log/1.log",
+			sources1 := map[string]interface{}{
+				"source1": map[string]interface{}{
+					"type": "file",
+					"path": "/var/log/1.log",
+				},
 			}
-			sourceConfig1JSON, err := json.Marshal(sourceConfig1)
+			sources1JSON, err := json.Marshal(sources1)
 			Expect(err).ShouldNot(HaveOccurred())
 
-			sourceConfig2 := map[string]interface{}{
-				"path": "/var/log/2.log",
+			sources2 := map[string]interface{}{
+				"source2": map[string]interface{}{
+					"type": "file",
+					"path": "/var/log/2.log",
+				},
 			}
-			sourceConfig2JSON, err := json.Marshal(sourceConfig2)
+			sources2JSON, err := json.Marshal(sources2)
 			Expect(err).ShouldNot(HaveOccurred())
 
 			pipeline1 := &vectorv1alpha1.VectorPipeline{
@@ -118,13 +123,8 @@ var _ = Describe("VectorPipeline Controller", func() {
 				},
 				Spec: vectorv1alpha1.VectorPipelineSpec{
 					VectorRef: VectorName,
-					Sources: map[string]vectorv1alpha1.Source{
-						"source1": {
-							Type: "file",
-							Config: runtime.RawExtension{
-								Raw: sourceConfig1JSON,
-							},
-						},
+					Sources: runtime.RawExtension{
+						Raw: sources1JSON,
 					},
 				},
 			}
@@ -136,13 +136,8 @@ var _ = Describe("VectorPipeline Controller", func() {
 				},
 				Spec: vectorv1alpha1.VectorPipelineSpec{
 					VectorRef: VectorName,
-					Sources: map[string]vectorv1alpha1.Source{
-						"source2": {
-							Type: "file",
-							Config: runtime.RawExtension{
-								Raw: sourceConfig2JSON,
-							},
-						},
+					Sources: runtime.RawExtension{
+						Raw: sources2JSON,
 					},
 				},
 			}
@@ -151,7 +146,7 @@ var _ = Describe("VectorPipeline Controller", func() {
 			Expect(k8sClient.Create(ctx, pipeline2)).Should(Succeed())
 
 			// Verify ConfigMap is created with merged configurations
-			configMapLookupKey := types.NamespacedName{Name: VectorName, Namespace: Namespace}
+			configMapLookupKey := types.NamespacedName{Name: VectorName + "-config", Namespace: Namespace}
 			createdConfigMap := &corev1.ConfigMap{}
 
 			Eventually(func() bool {
