@@ -33,10 +33,23 @@ func (r *VectorReconciler) deploymentForVector(v *vectorv1alpha1.Vector) *appsv1
 		replicas = 1 // Set default to 1 if not specified
 	}
 
+	// Create annotations map with config hash
+	annotations := make(map[string]string)
+	if v.Status.ConfigHash != "" {
+		annotations[configHashAnnotation] = v.Status.ConfigHash
+	}
+
+	// Create pod template annotations
+	podAnnotations := make(map[string]string)
+	for k, v := range annotations {
+		podAnnotations[k] = v
+	}
+
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      v.Name,
-			Namespace: v.Namespace,
+			Name:        v.Name,
+			Namespace:   v.Namespace,
+			Annotations: annotations,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -45,7 +58,8 @@ func (r *VectorReconciler) deploymentForVector(v *vectorv1alpha1.Vector) *appsv1
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: ls,
+					Labels:      ls,
+					Annotations: podAnnotations, // Use separate map for pod template annotations
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: v.Name,
@@ -127,6 +141,13 @@ func deploymentNeedsUpdate(vector *vectorv1alpha1.Vector, deployment *appsv1.Dep
 		if i >= len(vector.Spec.Tolerations) || toleration != vector.Spec.Tolerations[i] {
 			return true
 		}
+	}
+
+	// Check if config hash has changed in either the Deployment or pod template annotations
+	currentHash := deployment.Annotations[configHashAnnotation]
+	currentTemplateHash := deployment.Spec.Template.Annotations[configHashAnnotation]
+	if currentHash != vector.Status.ConfigHash || currentTemplateHash != vector.Status.ConfigHash {
+		return true
 	}
 
 	return deployment.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image ||

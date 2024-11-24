@@ -90,6 +90,10 @@ type VectorSpec struct {
 type VectorStatus struct {
 	// Conditions represent the latest available observations of Vector's state
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// ConfigHash represents the current hash of the Vector configuration
+	// +optional
+	ConfigHash string `json:"configHash,omitempty"`
 }
 
 //+kubebuilder:object:root=true

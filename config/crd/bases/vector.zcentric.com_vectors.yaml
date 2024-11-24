@@ -218,6 +218,10 @@ spec:
                   - type
                   type: object
                 type: array
+              configHash:
+                description: ConfigHash represents the current hash of the Vector
+                  configuration
+                type: string
             type: object
         type: object
     served: true

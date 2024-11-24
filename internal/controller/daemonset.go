@@ -29,10 +29,23 @@ import (
 func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.DaemonSet {
 	ls := labelsForVector(v.Name)
 
+	// Create annotations map with config hash
+	annotations := make(map[string]string)
+	if v.Status.ConfigHash != "" {
+		annotations[configHashAnnotation] = v.Status.ConfigHash
+	}
+
+	// Create pod template annotations
+	podAnnotations := make(map[string]string)
+	for k, v := range annotations {
+		podAnnotations[k] = v
+	}
+
 	ds := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      v.Name,
-			Namespace: v.Namespace,
+			Name:        v.Name,
+			Namespace:   v.Namespace,
+			Annotations: annotations,
 		},
 		Spec: appsv1.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{
@@ -40,7 +53,8 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: ls,
+					Labels:      ls,
+					Annotations: podAnnotations, // Use separate map for pod template annotations
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: v.Name,
@@ -203,6 +217,13 @@ func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.Daemo
 		if i >= len(vector.Spec.Tolerations) || toleration != vector.Spec.Tolerations[i] {
 			return true
 		}
+	}
+
+	// Check if config hash has changed in either the DaemonSet or pod template annotations
+	currentHash := daemonset.Annotations[configHashAnnotation]
+	currentTemplateHash := daemonset.Spec.Template.Annotations[configHashAnnotation]
+	if currentHash != vector.Status.ConfigHash || currentTemplateHash != vector.Status.ConfigHash {
+		return true
 	}
 
 	return daemonset.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image

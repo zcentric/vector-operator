@@ -12,7 +12,7 @@ spec:
   api:
     address: "0.0.0.0:8686"  # Default value
     enabled: true            # Enable API for monitoring
-    playground: true         # Enable GraphQL playground for testing
+    playground: false        # Enable GraphQL playground for testing
   # Optional Vector configuration
   data_dir: "/tmp/vector-data-dir"  # Default value
   expire_metrics_secs: 30           # Default value
@@ -23,3 +23,20 @@ spec:
   # Optional tolerations configuration
   tolerations:
     - operator: Exists
+---
+apiVersion: vector.zcentric.com/v1alpha1
+kind: VectorPipeline
+metadata:
+  name: vectorpipeline-aggregator-complete
+spec:
+  vectorRef: vector-aggregator-complete
+  sources:
+    source1:
+      type: "kubernetes_logs"
+  sinks:
+    console:
+      type: "console"
+      encoding:
+        codec: "json"
+      inputs:
+        - source1

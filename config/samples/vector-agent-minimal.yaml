@@ -6,7 +6,7 @@ spec:
   type: agent
   image: "timberio/vector:0.38.0-distroless-libc"
   api:
-    enabled: false
+    enabled: true
 ---
 apiVersion: vector.zcentric.com/v1alpha1
 kind: VectorPipeline
@@ -24,7 +24,3 @@ spec:
         codec: "json"
       inputs:
         - source1
-      buffer:
-        type: "memory"
-        max_size: 1000000
-        max_age: 60

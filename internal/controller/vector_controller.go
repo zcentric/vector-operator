@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -41,7 +43,8 @@ import (
 )
 
 const (
-	vectorFinalizer = "vector.zcentric.com/finalizer"
+	vectorFinalizer      = "vector.zcentric.com/finalizer"
+	configHashAnnotation = "vector.zcentric.com/config-hash"
 )
 
 // VectorReconciler reconciles a Vector object
@@ -49,6 +52,20 @@ type VectorReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+}
+
+// calculateConfigHash generates a hash of the ConfigMap data
+func calculateConfigHash(configMap *corev1.ConfigMap) string {
+	// Convert ConfigMap data to bytes for hashing
+	data, err := json.Marshal(configMap.Data)
+	if err != nil {
+		return ""
+	}
+
+	// Calculate SHA256 hash
+	hasher := sha256.New()
+	hasher.Write(data)
+	return hex.EncodeToString(hasher.Sum(nil))
 }
 
 // +kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors,verbs=get;list;watch;create;update;patch;delete
@@ -111,9 +128,22 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileConfigMap(ctx, vector); err != nil {
+	// Reconcile ConfigMap first to get the hash
+	configHash, err := r.reconcileConfigMap(ctx, vector)
+	if err != nil {
 		logger.Error(err, "Failed to reconcile ConfigMap")
 		return ctrl.Result{}, err
+	}
+
+	// Store the config hash in the Vector status if it has changed
+	if vector.Status.ConfigHash != configHash {
+		vector.Status.ConfigHash = configHash
+		if err := r.Status().Update(ctx, vector); err != nil {
+			logger.Error(err, "Failed to update Vector status with config hash")
+			return ctrl.Result{}, err
+		}
+		// Requeue to ensure the status update is processed
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Handle different deployment types
@@ -128,8 +158,8 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 }
 
-// reconcileConfigMap creates or updates the Vector ConfigMap
-func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1alpha1.Vector) error {
+// reconcileConfigMap creates or updates the Vector ConfigMap and returns its hash
+func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1alpha1.Vector) (string, error) {
 	logger := log.FromContext(ctx)
 
 	// Build the configuration sections
@@ -153,7 +183,7 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 	// Get all VectorPipelines that reference this Vector
 	var pipelineList vectorv1alpha1.VectorPipelineList
 	if err := r.List(ctx, &pipelineList, client.InNamespace(v.Namespace)); err != nil {
-		return err
+		return "", err
 	}
 
 	// Initialize sources, transforms, and sinks maps
@@ -216,7 +246,7 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 	// Convert to YAML
 	configYAML, err := yaml.Marshal(configData)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Create or update ConfigMap
@@ -232,8 +262,11 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 
 	// Set Vector instance as the owner
 	if err := ctrl.SetControllerReference(v, cm, r.Scheme); err != nil {
-		return err
+		return "", err
 	}
+
+	// Calculate hash before creating/updating
+	configHash := calculateConfigHash(cm)
 
 	// Create or update the ConfigMap
 	existingCM := &corev1.ConfigMap{}
@@ -243,17 +276,26 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 			logger.Info("Creating new ConfigMap",
 				"name", cm.Name,
 				"namespace", cm.Namespace)
-			return r.Create(ctx, cm)
+			if err := r.Create(ctx, cm); err != nil {
+				return "", err
+			}
+		} else {
+			return "", err
 		}
-		return err
+	} else {
+		// Only update if the content has changed
+		if existingCM.Data["vector.yaml"] != cm.Data["vector.yaml"] {
+			logger.Info("Updating existing ConfigMap",
+				"name", existingCM.Name,
+				"namespace", existingCM.Namespace)
+			existingCM.Data = cm.Data
+			if err := r.Update(ctx, existingCM); err != nil {
+				return "", err
+			}
+		}
 	}
 
-	logger.Info("Updating existing ConfigMap",
-		"name", existingCM.Name,
-		"namespace", existingCM.Namespace)
-
-	existingCM.Data = cm.Data
-	return r.Update(ctx, existingCM)
+	return configHash, nil
 }
 
 // reconcileAgent handles the agent type Vector with DaemonSet
@@ -286,7 +328,22 @@ func (r *VectorReconciler) reconcileAgent(ctx context.Context, vector *vectorv1a
 
 	// Update daemonset if needed
 	if daemonSetNeedsUpdate(vector, daemonset) {
+		// Update container image
 		daemonset.Spec.Template.Spec.Containers[0].Image = vector.Spec.Image
+
+		// Update tolerations if they've changed
+		daemonset.Spec.Template.Spec.Tolerations = vector.Spec.Tolerations
+
+		// Update config hash annotation on both the DaemonSet and pod template
+		if daemonset.Annotations == nil {
+			daemonset.Annotations = make(map[string]string)
+		}
+		if daemonset.Spec.Template.Annotations == nil {
+			daemonset.Spec.Template.Annotations = make(map[string]string)
+		}
+		daemonset.Annotations[configHashAnnotation] = vector.Status.ConfigHash
+		daemonset.Spec.Template.Annotations[configHashAnnotation] = vector.Status.ConfigHash
+
 		err = r.Update(ctx, daemonset)
 		if err != nil {
 			logger.Error(err, "Failed to update DaemonSet", "DaemonSet.Namespace", daemonset.Namespace, "DaemonSet.Name", daemonset.Name)
@@ -336,10 +393,25 @@ func (r *VectorReconciler) reconcileAggregator(ctx context.Context, vector *vect
 
 	// Update deployment if needed
 	if deploymentNeedsUpdate(vector, deployment) {
+		// Update container image and replicas
 		deployment.Spec.Template.Spec.Containers[0].Image = vector.Spec.Image
 		if vector.Spec.Replicas > 0 {
 			deployment.Spec.Replicas = &vector.Spec.Replicas
 		}
+
+		// Update tolerations if they've changed
+		deployment.Spec.Template.Spec.Tolerations = vector.Spec.Tolerations
+
+		// Update config hash annotation on both the Deployment and pod template
+		if deployment.Annotations == nil {
+			deployment.Annotations = make(map[string]string)
+		}
+		if deployment.Spec.Template.Annotations == nil {
+			deployment.Spec.Template.Annotations = make(map[string]string)
+		}
+		deployment.Annotations[configHashAnnotation] = vector.Status.ConfigHash
+		deployment.Spec.Template.Annotations[configHashAnnotation] = vector.Status.ConfigHash
+
 		err = r.Update(ctx, deployment)
 		if err != nil {
 			logger.Error(err, "Failed to update Deployment", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
