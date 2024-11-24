@@ -24,4 +24,4 @@ resources:
 # if you do not want those helpers be installed with your Project.
 - vector_editor_role.yaml
 - vector_viewer_role.yaml
-
+# Vector agent RBAC for pod listing permissions

@@ -73,21 +73,6 @@ type VectorSpec struct {
 	// ServiceAccount configuration for Vector
 	// +optional
 	ServiceAccount *ServiceAccountSpec `json:"serviceAccount,omitempty"`
-
-	// Sources defines the Vector sources configuration
-	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Sources map[string]Source `json:"sources,omitempty"`
-
-	// Transforms defines the Vector transforms configuration
-	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Transforms map[string]Transform `json:"transforms,omitempty"`
-
-	// Sinks defines the Vector sinks configuration
-	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Sinks map[string]Sink `json:"sinks,omitempty"`
 }
 
 // VectorStatus defines the observed state of Vector
