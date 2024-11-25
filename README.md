@@ -6,9 +6,10 @@ A Kubernetes operator that simplifies the deployment and management of [Vector](
 
 ## Overview
 
-The Vector Operator provides two custom resources:
+The Vector Operator provides three custom resources:
 
-- **Vector**: Manages the deployment of Vector instances in your cluster, supporting both agent (DaemonSet) and aggregator (Deployment) types
+- **Vector**: Manages the deployment of Vector agents (DaemonSet) in your cluster
+- **VectorAggregator**: Manages the deployment of Vector aggregators (Deployment) in your cluster
 - **VectorPipeline**: Defines observability data pipelines with sources, transforms, and sinks
 
 Key features:
@@ -36,7 +37,7 @@ Key features:
 kubectl apply -f https://raw.githubusercontent.com/zcentric/vector-operator/main/dist/install.yaml
 ```
 
-2. Create a Vector instance:
+2. Create Vector instances:
 
 For an agent (runs on every node):
 
@@ -47,20 +48,18 @@ metadata:
   name: vector-agent
   namespace: vector
 spec:
-  type: agent
   image: "timberio/vector:0.38.0-distroless-libc"
 ```
 
-Or for an aggregator (centralized processing):
+For an aggregator (centralized processing):
 
 ```yaml
 apiVersion: vector.zcentric.com/v1alpha1
-kind: Vector
+kind: VectorAggregator
 metadata:
   name: vector-aggregator
   namespace: vector
 spec:
-  type: aggregator
   image: "timberio/vector:0.38.0-distroless-libc"
   replicas: 2 # optional, defaults to 1
 ```
@@ -98,7 +97,7 @@ spec:
 
 #### Agent Configuration (DaemonSet)
 
-Use the agent type when you need to collect logs and metrics from every node in your cluster:
+Use the Vector CRD when you need to collect logs and metrics from every node in your cluster:
 
 ```yaml
 apiVersion: vector.zcentric.com/v1alpha1
@@ -106,7 +105,6 @@ kind: Vector
 metadata:
   name: vector-agent
 spec:
-  type: agent
   image: "timberio/vector:0.38.0-distroless-libc"
   api:
     enabled: true
@@ -117,15 +115,14 @@ spec:
 
 #### Aggregator Configuration (Deployment)
 
-Use the aggregator type when you need centralized log processing and aggregation:
+Use the VectorAggregator CRD when you need centralized log processing and aggregation:
 
 ```yaml
 apiVersion: vector.zcentric.com/v1alpha1
-kind: Vector
+kind: VectorAggregator
 metadata:
   name: vector-aggregator
 spec:
-  type: aggregator
   image: "timberio/vector:0.38.0-distroless-libc"
   replicas: 2
   api:
@@ -173,12 +170,12 @@ spec:
 
 1. **Log Collection and Forwarding**:
 
-   - Deploy a Vector agent (DaemonSet) to collect logs from all nodes
-   - Deploy a Vector aggregator (Deployment) to receive and process logs centrally
-   - Configure agents to forward to the aggregator
+   - Deploy Vector agents (DaemonSet) to collect logs from all nodes
+   - Deploy VectorAggregator instances (Deployment) to receive and process logs centrally
+   - Configure agents to forward to the aggregators
 
 2. **High Availability Aggregation**:
-   - Deploy multiple Vector aggregator replicas for redundancy
+   - Deploy multiple VectorAggregator replicas for redundancy
    - Use load balancing for even distribution of log processing
 
 ## Contributing
