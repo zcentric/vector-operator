@@ -4,27 +4,30 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.15.0
-  name: vectors.vector.zcentric.com
+  name: vectoraggregators.vector.zcentric.com
 spec:
   group: vector.zcentric.com
   names:
-    kind: Vector
-    listKind: VectorList
-    plural: vectors
-    singular: vector
+    kind: VectorAggregator
+    listKind: VectorAggregatorList
+    plural: vectoraggregators
+    singular: vectoraggregator
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.image
       name: Image
       type: string
+    - jsonPath: .spec.replicas
+      name: Replicas
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Vector is the Schema for the vectors API
+        description: VectorAggregator is the Schema for the vectoraggregators API
         properties:
           apiVersion:
             description: |-
@@ -44,7 +47,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: VectorSpec defines the desired state of Vector
+            description: VectorAggregatorSpec defines the desired state of VectorAggregator
             properties:
               api:
                 description: API configuration for Vector
@@ -76,6 +79,12 @@ spec:
               image:
                 description: Image specifies the Vector container image to use
                 type: string
+              replicas:
+                default: 1
+                description: Replicas is the number of Vector pods to run
+                format: int32
+                minimum: 0
+                type: integer
               serviceAccount:
                 description: ServiceAccount configuration for Vector
                 properties:
@@ -128,11 +137,11 @@ spec:
             - image
             type: object
           status:
-            description: VectorStatus defines the observed state of Vector
+            description: VectorAggregatorStatus defines the observed state of VectorAggregator
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of Vector's state
+                  of VectorAggregator's state
                 items:
                   description: "Condition contains details for one aspect of the current
                     state of this API Resource.\n---\nThis struct is intended for

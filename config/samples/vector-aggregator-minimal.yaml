@@ -1,8 +1,17 @@
-
 apiVersion: vector.zcentric.com/v1alpha1
-kind: Vector
+kind: VectorAggregator
 metadata:
   name: vector-aggregator-minimal
 spec:
-  type: aggregator
   image: "timberio/vector:0.38.0-distroless-libc"
+---
+
+apiVersion: vector.zcentric.com/v1alpha1
+kind: VectorPipeline
+metadata:
+  name: vector-aggregator-minimal-base
+spec:
+  vectorRef: vector-aggregator-minimal
+  sources:
+    logs:
+      type: "kubernetes_logs"

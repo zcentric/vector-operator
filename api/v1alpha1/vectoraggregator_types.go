@@ -21,36 +21,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// VectorAPI defines the API configuration for Vector
-type VectorAPI struct {
-	// Address is the address to bind the API server to
-	// +optional
-	// +kubebuilder:default="0.0.0.0:8686"
-	Address string `json:"address,omitempty"`
-
-	// Enabled determines if the API server should be enabled
-	// +optional
-	// +kubebuilder:default=false
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Playground determines if the GraphQL playground should be enabled
-	// +optional
-	// +kubebuilder:default=false
-	Playground *bool `json:"playground,omitempty"`
-}
-
-// ServiceAccountSpec defines the configuration for the Vector ServiceAccount
-type ServiceAccountSpec struct {
-	// Annotations to be added to the ServiceAccount
-	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
-}
-
-// VectorSpec defines the desired state of Vector
-type VectorSpec struct {
+// VectorAggregatorSpec defines the desired state of VectorAggregator
+type VectorAggregatorSpec struct {
 	// Image specifies the Vector container image to use
 	// +kubebuilder:validation:Required
 	Image string `json:"image"`
+
+	// Replicas is the number of Vector pods to run
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	Replicas int32 `json:"replicas,omitempty"`
 
 	// API configuration for Vector
 	// +optional
@@ -75,9 +56,9 @@ type VectorSpec struct {
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 }
 
-// VectorStatus defines the observed state of Vector
-type VectorStatus struct {
-	// Conditions represent the latest available observations of Vector's state
+// VectorAggregatorStatus defines the observed state of VectorAggregator
+type VectorAggregatorStatus struct {
+	// Conditions represent the latest available observations of VectorAggregator's state
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// ConfigHash represents the current hash of the Vector configuration
@@ -89,26 +70,27 @@ type VectorStatus struct {
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:scope=Namespaced
 //+kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image"
+//+kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".spec.replicas"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// Vector is the Schema for the vectors API
-type Vector struct {
+// VectorAggregator is the Schema for the vectoraggregators API
+type VectorAggregator struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   VectorSpec   `json:"spec,omitempty"`
-	Status VectorStatus `json:"status,omitempty"`
+	Spec   VectorAggregatorSpec   `json:"spec,omitempty"`
+	Status VectorAggregatorStatus `json:"status,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 
-// VectorList contains a list of Vector
-type VectorList struct {
+// VectorAggregatorList contains a list of VectorAggregator
+type VectorAggregatorList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Vector `json:"items"`
+	Items           []VectorAggregator `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Vector{}, &VectorList{})
+	SchemeBuilder.Register(&VectorAggregator{}, &VectorAggregatorList{})
 }

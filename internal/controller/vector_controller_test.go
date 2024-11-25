@@ -53,7 +53,6 @@ var _ = Describe("Vector Controller", func() {
 					Namespace: "default",
 				},
 				Spec: vectorv1alpha1.VectorSpec{
-					Type:  "agent",
 					Image: "timberio/vector:0.24.0-distroless-libc",
 					API: &vectorv1alpha1.VectorAPI{
 						Address:    "0.0.0.0:8686",

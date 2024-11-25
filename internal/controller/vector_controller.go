@@ -56,13 +56,10 @@ type VectorReconciler struct {
 
 // calculateConfigHash generates a hash of the ConfigMap data
 func calculateConfigHash(configMap *corev1.ConfigMap) string {
-	// Convert ConfigMap data to bytes for hashing
 	data, err := json.Marshal(configMap.Data)
 	if err != nil {
 		return ""
 	}
-
-	// Calculate SHA256 hash
 	hasher := sha256.New()
 	hasher.Write(data)
 	return hex.EncodeToString(hasher.Sum(nil))
@@ -71,7 +68,7 @@ func calculateConfigHash(configMap *corev1.ConfigMap) string {
 // +kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors/finalizers,verbs=update
-// +kubebuilder:rbac:groups=apps,resources=daemonsets;deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
@@ -146,16 +143,121 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Handle different deployment types
-	switch vector.Spec.Type {
-	case "agent":
-		return r.reconcileAgent(ctx, vector)
-	case "aggregator":
-		return r.reconcileAggregator(ctx, vector)
-	default:
-		logger.Error(fmt.Errorf("unknown vector type"), "Invalid vector type", "type", vector.Spec.Type)
-		return ctrl.Result{}, fmt.Errorf("unknown vector type: %s", vector.Spec.Type)
+	// Reconcile the DaemonSet
+	return r.reconcileAgent(ctx, vector)
+}
+
+// daemonSetForVector returns a vector DaemonSet object
+func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.DaemonSet {
+	ls := labelsForVector(v.Name)
+
+	// Create annotations map with config hash
+	annotations := make(map[string]string)
+	if v.Status.ConfigHash != "" {
+		annotations[configHashAnnotation] = v.Status.ConfigHash
 	}
+
+	// Create pod template annotations
+	podAnnotations := make(map[string]string)
+	for k, v := range annotations {
+		podAnnotations[k] = v
+	}
+
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        v.Name,
+			Namespace:   v.Namespace,
+			Annotations: annotations,
+		},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: ls,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      ls,
+					Annotations: podAnnotations,
+				},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: v.Name,
+					Tolerations:        v.Spec.Tolerations,
+					Containers: []corev1.Container{
+						{
+							Image: v.Spec.Image,
+							Name:  "vector",
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 8686,
+									Name:          "api",
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "config",
+									MountPath: "/etc/vector",
+								},
+								{
+									Name:      "data",
+									MountPath: v.Spec.DataDir,
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "data",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+						{
+							Name: "config",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: v.Name + "-config",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Set Vector instance as the owner and controller
+	if err := ctrl.SetControllerReference(v, ds, r.Scheme); err != nil {
+		return nil
+	}
+	return ds
+}
+
+// daemonSetNeedsUpdate returns true if the daemonset needs to be updated
+func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.DaemonSet) bool {
+	if len(daemonset.Spec.Template.Spec.Containers) == 0 {
+		return true
+	}
+
+	// Check if tolerations have changed
+	currentTolerations := daemonset.Spec.Template.Spec.Tolerations
+	if len(currentTolerations) != len(vector.Spec.Tolerations) {
+		return true
+	}
+	for i, toleration := range currentTolerations {
+		if i >= len(vector.Spec.Tolerations) || toleration != vector.Spec.Tolerations[i] {
+			return true
+		}
+	}
+
+	// Check if config hash has changed in either the DaemonSet or pod template annotations
+	currentHash := daemonset.Annotations[configHashAnnotation]
+	currentTemplateHash := daemonset.Spec.Template.Annotations[configHashAnnotation]
+	if currentHash != vector.Status.ConfigHash || currentTemplateHash != vector.Status.ConfigHash {
+		return true
+	}
+
+	return daemonset.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image
 }
 
 // reconcileConfigMap creates or updates the Vector ConfigMap and returns its hash
@@ -298,7 +400,7 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 	return configHash, nil
 }
 
-// reconcileAgent handles the agent type Vector with DaemonSet
+// reconcileAgent handles the Vector DaemonSet
 func (r *VectorReconciler) reconcileAgent(ctx context.Context, vector *vectorv1alpha1.Vector) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -356,74 +458,6 @@ func (r *VectorReconciler) reconcileAgent(ctx context.Context, vector *vectorv1a
 
 	// Update the Vector status
 	if err := r.updateVectorStatus(ctx, vector, daemonset); err != nil {
-		logger.Error(err, "Failed to update Vector status")
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{RequeueAfter: time.Minute}, nil
-}
-
-// reconcileAggregator handles the aggregator type Vector with Deployment
-func (r *VectorReconciler) reconcileAggregator(ctx context.Context, vector *vectorv1alpha1.Vector) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	// Check if the deployment already exists, if not create a new one
-	deployment := &appsv1.Deployment{}
-	err := r.Get(ctx, types.NamespacedName{Name: vector.Name, Namespace: vector.Namespace}, deployment)
-	if err != nil && errors.IsNotFound(err) {
-		// Define a new deployment
-		dep := r.deploymentForVector(vector)
-		logger.Info("Creating a new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
-		err = r.Create(ctx, dep)
-		if err != nil {
-			logger.Error(err, "Failed to create new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
-			if r.Recorder != nil {
-				r.Recorder.Event(vector, corev1.EventTypeWarning, "Failed", "Failed to create Vector deployment")
-			}
-			return ctrl.Result{}, err
-		}
-		if r.Recorder != nil {
-			r.Recorder.Event(vector, corev1.EventTypeNormal, "Created", "Created Vector deployment")
-		}
-		return ctrl.Result{Requeue: true}, nil
-	} else if err != nil {
-		logger.Error(err, "Failed to get Deployment")
-		return ctrl.Result{}, err
-	}
-
-	// Update deployment if needed
-	if deploymentNeedsUpdate(vector, deployment) {
-		// Update container image and replicas
-		deployment.Spec.Template.Spec.Containers[0].Image = vector.Spec.Image
-		if vector.Spec.Replicas > 0 {
-			deployment.Spec.Replicas = &vector.Spec.Replicas
-		}
-
-		// Update tolerations if they've changed
-		deployment.Spec.Template.Spec.Tolerations = vector.Spec.Tolerations
-
-		// Update config hash annotation on both the Deployment and pod template
-		if deployment.Annotations == nil {
-			deployment.Annotations = make(map[string]string)
-		}
-		if deployment.Spec.Template.Annotations == nil {
-			deployment.Spec.Template.Annotations = make(map[string]string)
-		}
-		deployment.Annotations[configHashAnnotation] = vector.Status.ConfigHash
-		deployment.Spec.Template.Annotations[configHashAnnotation] = vector.Status.ConfigHash
-
-		err = r.Update(ctx, deployment)
-		if err != nil {
-			logger.Error(err, "Failed to update Deployment", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
-			return ctrl.Result{}, err
-		}
-		if r.Recorder != nil {
-			r.Recorder.Event(vector, corev1.EventTypeNormal, "Updated", "Updated Vector deployment")
-		}
-	}
-
-	// Update the Vector status
-	if err := r.updateVectorStatus(ctx, vector, deployment); err != nil {
 		logger.Error(err, "Failed to update Vector status")
 		return ctrl.Result{}, err
 	}
@@ -526,16 +560,6 @@ func (r *VectorReconciler) cleanupResources(ctx context.Context, v *vectorv1alph
 	if err == nil {
 		logger.Info("Deleting DaemonSet", "name", ds.Name)
 		if err := r.Delete(ctx, ds); err != nil && !errors.IsNotFound(err) {
-			return err
-		}
-	}
-
-	// Delete Deployment if it exists
-	dep := &appsv1.Deployment{}
-	err = r.Get(ctx, types.NamespacedName{Name: v.Name, Namespace: v.Namespace}, dep)
-	if err == nil {
-		logger.Info("Deleting Deployment", "name", dep.Name)
-		if err := r.Delete(ctx, dep); err != nil && !errors.IsNotFound(err) {
 			return err
 		}
 	}
@@ -659,14 +683,6 @@ func (r *VectorReconciler) updateVectorStatus(ctx context.Context, vector *vecto
 			condition.Reason = "DaemonSetUnavailable"
 			condition.Message = "Vector daemonset is not available"
 		}
-	case *appsv1.Deployment:
-		condition.Reason = "DeploymentAvailable"
-		condition.Message = "Vector deployment is available"
-		if v.Status.ReadyReplicas == 0 {
-			condition.Status = metav1.ConditionFalse
-			condition.Reason = "DeploymentUnavailable"
-			condition.Message = "Vector deployment is not available"
-		}
 	}
 
 	// Update the condition
@@ -689,7 +705,6 @@ func (r *VectorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&vectorv1alpha1.Vector{}).
 		Owns(&appsv1.DaemonSet{}).
-		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.ServiceAccount{}).
 		Complete(r)

@@ -17,6 +17,8 @@ rules:
   resources:
   - daemonsets
   verbs:
+  - create
+  - delete
   - get
   - list
   - patch
@@ -25,7 +27,6 @@ rules:
 - apiGroups:
   - apps
   resources:
-  - daemonsets
   - deployments
   verbs:
   - create
@@ -75,6 +76,18 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - clusterrolebindings
@@ -87,6 +100,32 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectoraggregators
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectoraggregators/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - vector.zcentric.com
+  resources:
+  - vectoraggregators/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - vector.zcentric.com
   resources:

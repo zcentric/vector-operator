@@ -1,61 +1,36 @@
-
-# Complete agent example with all optional fields
 apiVersion: vector.zcentric.com/v1alpha1
 kind: Vector
 metadata:
   name: vector-agent-complete
 spec:
-  type: agent
-  image: "timberio/vector:0.38.0-distroless-libc"
-  # Optional API configuration
+  image: timberio/vector:0.34.0-debian
   api:
-    address: "0.0.0.0:8686"  # Default value
-    enabled: false           # Default value
-    playground: false        # Default value
-  # Optional Vector configuration
-  data_dir: "/tmp/vector-data-dir"  # Default value
-  expire_metrics_secs: 30           # Default value
-  # Optional ServiceAccount configuration
+    enabled: true
+    address: "0.0.0.0:8686"
+    playground: true
+  data_dir: "/var/lib/vector"
+  expire_metrics_secs: 30
   serviceAccount:
     annotations:
-      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/vector-role"  # Example AWS IRSA annotation
-  # Optional tolerations configuration
+      example.com/annotation: "value"
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
-      effect: "NoSchedule"
-    - key: "example.com/workload-type"
-      operator: "Equal"
-      value: "logging"
       effect: "NoSchedule"
 ---
 
 apiVersion: vector.zcentric.com/v1alpha1
 kind: VectorPipeline
 metadata:
-  name: vectorpipeline-sample
+  name: vector-agent-complete-base
 spec:
   vectorRef: vector-agent-complete
   sources:
-    source1:
+    logs:
       type: "kubernetes_logs"
-  transforms:
-    remap:
-      type: "remap"
-      inputs:
-        - source1
-      source: |
-        .@timestamp = del(.timestamp)
-        .testField = "testValuevalue"
-    filter:
-      type: "filter"
-      inputs:
-        - remap
-      condition:
-        type: "vrl"
-        source: ".status != 200"
+
   sinks:
-    test222:
+    stdout:
       type: "console"
       encoding:
         codec: "json"
@@ -65,13 +40,20 @@ spec:
 apiVersion: vector.zcentric.com/v1alpha1
 kind: VectorPipeline
 metadata:
-  name: vectorpipeline-team2
+  name: vector-agent-complete-b
 spec:
   vectorRef: vector-agent-complete
   transforms:
-    config:
+    addTeam:
       type: "remap"
       inputs:
-        - source1
+        - logs
       source: |
-        .merged = "config"
+        .team = "teamA"
+    filter:
+      type: "filter"
+      inputs:
+        - addTeam
+      condition:
+        type: "vrl"
+        source: ".status != 200"
