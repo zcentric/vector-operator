@@ -136,6 +136,7 @@ func (r *VectorAggregatorReconciler) deploymentForVectorAggregator(v *vectorv1al
 				},
 				Spec: corev1.PodSpec{
 					TopologySpreadConstraints: v.Spec.TopologySpreadConstraints,
+					ImagePullSecrets:         v.Spec.ImagePullSecrets,
 					Containers: []corev1.Container{{
 						Image: v.Spec.Image,
 						Name:  "vector",
@@ -224,6 +225,11 @@ func needsUpdate(deployment *appsv1.Deployment, v *vectorv1alpha1.VectorAggregat
 	}
 	expectedVolumeMounts := append(defaultVolumeMounts, v.Spec.VolumeMounts...)
 	if !reflect.DeepEqual(container.VolumeMounts, expectedVolumeMounts) {
+		return true
+	}
+
+	// Check if imagePullSecrets have changed
+	if !reflect.DeepEqual(deployment.Spec.Template.Spec.ImagePullSecrets, v.Spec.ImagePullSecrets) {
 		return true
 	}
 

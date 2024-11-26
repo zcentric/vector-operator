@@ -215,6 +215,7 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 				Spec: corev1.PodSpec{
 					ServiceAccountName: v.Name,
 					Tolerations:        v.Spec.Tolerations,
+					ImagePullSecrets:   v.Spec.ImagePullSecrets,
 					Containers: []corev1.Container{
 						{
 							Image: v.Spec.Image,
@@ -305,6 +306,11 @@ func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.Daemo
 			MountPath: vector.Spec.DataDir,
 		},
 	}, vector.Spec.VolumeMounts...)) {
+		return true
+	}
+
+	// Check if imagePullSecrets have changed
+	if !reflect.DeepEqual(daemonset.Spec.Template.Spec.ImagePullSecrets, vector.Spec.ImagePullSecrets) {
 		return true
 	}
 

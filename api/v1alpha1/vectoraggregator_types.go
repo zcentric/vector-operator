@@ -27,6 +27,10 @@ type VectorAggregatorSpec struct {
 	// +kubebuilder:validation:Required
 	Image string `json:"image"`
 
+	// ImagePullSecrets is a list of references to secrets in the same namespace to use for pulling the Vector image
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
 	// Replicas is the number of Vector pods to run
 	// +optional
 	// +kubebuilder:default=1

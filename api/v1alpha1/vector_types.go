@@ -52,6 +52,10 @@ type VectorSpec struct {
 	// +kubebuilder:validation:Required
 	Image string `json:"image"`
 
+	// ImagePullSecrets is a list of references to secrets in the same namespace to use for pulling the Vector image
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
 	// API configuration for Vector
 	// +optional
 	API *VectorAPI `json:"api,omitempty"`

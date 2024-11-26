@@ -13,6 +13,10 @@ spec:
   # Required: Vector container image to use
   image: timberio/vector:0.38.0-distroless-libc
 
+  # Optional: Image pull secrets for private registry authentication
+  imagePullSecrets:
+    - name: my-registry-secret
+
   # Optional: Number of replicas to run (default: 1)
   replicas: 3
 
@@ -100,6 +104,9 @@ spec:
 
 ### Optional Fields
 
+- `imagePullSecrets`: List of references to secrets for pulling the Vector image from private registries
+  - `name`: Name of the secret containing registry credentials
+
 - `replicas`: Number of Vector aggregator pods to run (default: 1)
 
 - `api`: Configuration for Vector's API server
@@ -160,6 +167,8 @@ metadata:
   name: vector-aggregator
 spec:
   image: timberio/vector:0.38.0-distroless-libc
+  imagePullSecrets:
+    - name: registry-credentials
   replicas: 3
   api:
     enabled: true
@@ -188,4 +197,4 @@ spec:
       mountPath: /var/lib/vector/buffer
 ```
 
-This example deploys a highly available Vector aggregator with 3 replicas, distributed across availability zones, with persistent storage for buffers. The Vector operator will create a Deployment that ensures the specified number of Vector aggregator pods are running and properly distributed across the cluster.
+This example deploys a highly available Vector aggregator with 3 replicas, distributed across availability zones, with persistent storage for buffers and private registry authentication. The Vector operator will create a Deployment that ensures the specified number of Vector aggregator pods are running and properly distributed across the cluster.

@@ -13,6 +13,10 @@ spec:
   # Required: Vector container image to use
   image: timberio/vector:0.34.0-debian
 
+  # Optional: Image pull secrets for private registry authentication
+  imagePullSecrets:
+    - name: my-registry-secret
+
   # Optional: API configuration for Vector
   api:
     # Address to bind the API server to (default: "0.0.0.0:8686")
@@ -89,6 +93,9 @@ spec:
 
 ### Optional Fields
 
+- `imagePullSecrets`: List of references to secrets for pulling the Vector image from private registries
+  - `name`: Name of the secret containing registry credentials
+
 - `api`: Configuration for Vector's API server
   - `address`: The address to bind the API server to
   - `enabled`: Whether to enable the API server
@@ -146,6 +153,8 @@ metadata:
   name: vector-agent
 spec:
   image: timberio/vector:0.34.0-debian
+  imagePullSecrets:
+    - name: registry-credentials
   api:
     enabled: true
     address: "0.0.0.0:8686"
@@ -168,4 +177,4 @@ spec:
       readOnly: true
 ```
 
-This example deploys Vector agents with API enabled, defined resource limits, and access to host logs through a volume mount. The Vector operator will create a DaemonSet that ensures Vector runs on every node in your cluster.
+This example deploys Vector agents with API enabled, defined resource limits, private registry authentication, and access to host logs through a volume mount. The Vector operator will create a DaemonSet that ensures Vector runs on every node in your cluster.
