@@ -54,6 +54,14 @@ type VectorAggregatorSpec struct {
 	// Tolerations defines the pod's tolerations
 	// +optional
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// Env defines the environment variables to be added to the Vector container
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// Resources defines the resource requirements for the Vector container
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
 // VectorAggregatorStatus defines the observed state of VectorAggregator

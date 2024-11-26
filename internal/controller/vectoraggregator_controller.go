@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -121,6 +122,8 @@ func (r *VectorAggregatorReconciler) deploymentForVectorAggregator(v *vectorv1al
 							ContainerPort: 8686,
 							Name:          "api",
 						}},
+						Env:       v.Spec.Env,
+						Resources: v.Spec.Resources,
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "data",
 							MountPath: v.Spec.DataDir,
@@ -158,9 +161,32 @@ func needsUpdate(deployment *appsv1.Deployment, v *vectorv1alpha1.VectorAggregat
 	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != v.Spec.Replicas {
 		return true
 	}
-	if len(deployment.Spec.Template.Spec.Containers) > 0 &&
-		deployment.Spec.Template.Spec.Containers[0].Image != v.Spec.Image {
+
+	if len(deployment.Spec.Template.Spec.Containers) == 0 {
 		return true
 	}
+
+	container := deployment.Spec.Template.Spec.Containers[0]
+
+	// Check if image has changed
+	if container.Image != v.Spec.Image {
+		return true
+	}
+
+	// Check if environment variables have changed
+	if !reflect.DeepEqual(container.Env, v.Spec.Env) {
+		return true
+	}
+
+	// Check if resources have changed
+	if !reflect.DeepEqual(container.Resources, v.Spec.Resources) {
+		return true
+	}
+
+	// Check if tolerations have changed
+	if !reflect.DeepEqual(deployment.Spec.Template.Spec.Tolerations, v.Spec.Tolerations) {
+		return true
+	}
+
 	return false
 }

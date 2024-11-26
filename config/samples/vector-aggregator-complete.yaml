@@ -1,4 +1,3 @@
-
 apiVersion: vector.zcentric.com/v1alpha1
 kind: VectorAggregator
 metadata:
@@ -22,6 +21,39 @@ spec:
   # Optional tolerations configuration
   tolerations:
     - operator: Exists
+  # Environment variables configuration
+  env:
+    - name: VECTOR_BUFFER_SIZE
+      value: "1048576" # 1MB buffer size
+    - name: VECTOR_CONCURRENCY
+      value: "4" # Number of concurrent tasks
+    - name: VECTOR_ACKNOWLEDGEMENTS
+      value: "true"
+    - name: VECTOR_CUSTOM_ENDPOINT
+      valueFrom:
+        configMapKeyRef:
+          name: vector-aggregator-config
+          key: endpoint
+    - name: VECTOR_COMPRESSION_ENABLED
+      value: "true"
+    - name: VECTOR_AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: vector-aws-credentials
+          key: access-key-id
+    - name: VECTOR_AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: vector-aws-credentials
+          key: secret-access-key
+  # Resource requirements configuration
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
 ---
 apiVersion: vector.zcentric.com/v1alpha1
 kind: VectorPipeline

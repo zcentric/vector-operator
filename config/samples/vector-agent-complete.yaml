@@ -17,6 +17,28 @@ spec:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
       effect: "NoSchedule"
+  env:
+    - name: VECTOR_LOG
+      value: "debug"
+    - name: VECTOR_THREADS
+      value: "2"
+    - name: VECTOR_CONFIG_YAML
+      valueFrom:
+        configMapKeyRef:
+          name: vector-config
+          key: config.yaml
+    - name: VECTOR_DATADOG_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: vector-secrets
+          key: datadog-api-key
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
 ---
 
 apiVersion: vector.zcentric.com/v1alpha1

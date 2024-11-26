@@ -191,6 +191,8 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 									Name:          "api",
 								},
 							},
+							Env:       v.Spec.Env,
+							Resources: v.Spec.Resources,
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "config",
@@ -239,6 +241,8 @@ func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.Daemo
 		return true
 	}
 
+	container := daemonset.Spec.Template.Spec.Containers[0]
+
 	// Check if tolerations have changed
 	currentTolerations := daemonset.Spec.Template.Spec.Tolerations
 	if len(currentTolerations) != len(vector.Spec.Tolerations) {
@@ -250,6 +254,16 @@ func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.Daemo
 		}
 	}
 
+	// Check if environment variables have changed
+	if !reflect.DeepEqual(container.Env, vector.Spec.Env) {
+		return true
+	}
+
+	// Check if resources have changed
+	if !reflect.DeepEqual(container.Resources, vector.Spec.Resources) {
+		return true
+	}
+
 	// Check if config hash has changed in either the DaemonSet or pod template annotations
 	currentHash := daemonset.Annotations[configHashAnnotation]
 	currentTemplateHash := daemonset.Spec.Template.Annotations[configHashAnnotation]
@@ -257,7 +271,7 @@ func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.Daemo
 		return true
 	}
 
-	return daemonset.Spec.Template.Spec.Containers[0].Image != vector.Spec.Image
+	return container.Image != vector.Spec.Image
 }
 
 // reconcileConfigMap creates or updates the Vector ConfigMap and returns its hash
@@ -430,8 +444,10 @@ func (r *VectorReconciler) reconcileAgent(ctx context.Context, vector *vectorv1a
 
 	// Update daemonset if needed
 	if daemonSetNeedsUpdate(vector, daemonset) {
-		// Update container image
+		// Update container image, environment variables, and resources
 		daemonset.Spec.Template.Spec.Containers[0].Image = vector.Spec.Image
+		daemonset.Spec.Template.Spec.Containers[0].Env = vector.Spec.Env
+		daemonset.Spec.Template.Spec.Containers[0].Resources = vector.Spec.Resources
 
 		// Update tolerations if they've changed
 		daemonset.Spec.Template.Spec.Tolerations = vector.Spec.Tolerations
