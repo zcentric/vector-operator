@@ -115,6 +115,7 @@ func (r *VectorAggregatorReconciler) deploymentForVectorAggregator(v *vectorv1al
 					Labels: ls,
 				},
 				Spec: corev1.PodSpec{
+					TopologySpreadConstraints: v.Spec.TopologySpreadConstraints,
 					Containers: []corev1.Container{{
 						Image: v.Spec.Image,
 						Name:  "vector",
@@ -180,6 +181,11 @@ func needsUpdate(deployment *appsv1.Deployment, v *vectorv1alpha1.VectorAggregat
 
 	// Check if resources have changed
 	if !reflect.DeepEqual(container.Resources, v.Spec.Resources) {
+		return true
+	}
+
+	// Check if topology spread constraints have changed
+	if !reflect.DeepEqual(deployment.Spec.Template.Spec.TopologySpreadConstraints, v.Spec.TopologySpreadConstraints) {
 		return true
 	}
 

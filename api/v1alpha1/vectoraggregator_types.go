@@ -62,6 +62,10 @@ type VectorAggregatorSpec struct {
 	// Resources defines the resource requirements for the Vector container
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// TopologySpreadConstraints describes how a group of pods ought to spread across topology domains
+	// +optional
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
 }
 
 // VectorAggregatorStatus defines the observed state of VectorAggregator

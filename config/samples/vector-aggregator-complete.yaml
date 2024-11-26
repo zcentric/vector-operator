@@ -5,7 +5,7 @@ metadata:
 spec:
   image: "timberio/vector:0.38.0-distroless-libc"
   # Optional deployment configuration
-  replicas: 1               # Default value is 1
+  replicas: 3               # Default value is 1
   # Optional API configuration
   api:
     address: "0.0.0.0:8686"  # Default value
@@ -54,6 +54,22 @@ spec:
     limits:
       cpu: "2"
       memory: "2Gi"
+  # Topology spread constraints for high availability
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: vector
+          app.kubernetes.io/component: aggregator
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: vector
+          app.kubernetes.io/component: aggregator
 ---
 apiVersion: vector.zcentric.com/v1alpha1
 kind: VectorPipeline
