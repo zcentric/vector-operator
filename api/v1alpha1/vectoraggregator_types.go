@@ -66,6 +66,14 @@ type VectorAggregatorSpec struct {
 	// TopologySpreadConstraints describes how a group of pods ought to spread across topology domains
 	// +optional
 	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+
+	// Volumes defines additional volumes to be added to the Vector pod
+	// +optional
+	Volumes []corev1.Volume `json:"volumes,omitempty"`
+
+	// VolumeMounts defines additional volume mounts to be added to the Vector container
+	// +optional
+	VolumeMounts []corev1.VolumeMount `json:"volumeMounts,omitempty"`
 }
 
 // VectorAggregatorStatus defines the observed state of VectorAggregator

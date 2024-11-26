@@ -57,6 +57,28 @@ spec:
     limits:
       cpu: "500m"
       memory: "512Mi"
+
+  # Optional: Additional volumes to mount
+  volumes:
+    - name: custom-config
+      configMap:
+        name: custom-vector-config
+    - name: secrets
+      secret:
+        secretName: vector-secrets
+    - name: persistent-data
+      persistentVolumeClaim:
+        claimName: vector-data
+
+  # Optional: Additional volume mounts
+  volumeMounts:
+    - name: custom-config
+      mountPath: /etc/vector/custom
+    - name: secrets
+      mountPath: /etc/vector/secrets
+      readOnly: true
+    - name: persistent-data
+      mountPath: /var/lib/vector/data
 ```
 
 ## Field Descriptions
@@ -82,6 +104,29 @@ spec:
 - `resources`: Kubernetes resource requirements for the Vector container
   - `requests`: Minimum required resources
   - `limits`: Maximum allowed resources
+
+- `volumes`: Additional Kubernetes volumes to add to the pod
+  - Supports all Kubernetes volume types (ConfigMap, Secret, PVC, etc.)
+  - These are added alongside the default data and config volumes
+
+- `volumeMounts`: Additional volume mounts for the Vector container
+  - Specifies how volumes should be mounted in the container
+  - These are added alongside the default data and config mounts
+
+## Default Volumes
+
+The Vector operator automatically creates and mounts the following volumes:
+
+1. `data` volume:
+   - Type: emptyDir
+   - Mount path: Value of `spec.data_dir`
+   - Used for temporary Vector data storage
+
+2. `config` volume:
+   - Type: ConfigMap
+   - Mount path: /etc/vector
+   - Contains Vector's configuration
+   - Created and managed by the operator
 
 ## Usage
 
@@ -112,6 +157,15 @@ spec:
     limits:
       cpu: "500m"
       memory: "512Mi"
+  volumes:
+    - name: host-logs
+      hostPath:
+        path: /var/log
+        type: Directory
+  volumeMounts:
+    - name: host-logs
+      mountPath: /var/log
+      readOnly: true
 ```
 
-This example deploys Vector agents with API enabled and defined resource limits. The Vector operator will create a DaemonSet that ensures Vector runs on every node in your cluster.
+This example deploys Vector agents with API enabled, defined resource limits, and access to host logs through a volume mount. The Vector operator will create a DaemonSet that ensures Vector runs on every node in your cluster.

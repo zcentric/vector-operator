@@ -163,6 +163,40 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 		podAnnotations[k] = v
 	}
 
+	// Combine default volumes with user-defined volumes
+	volumes := []corev1.Volume{
+		{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+		{
+			Name: "config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: v.Name + "-config",
+					},
+				},
+			},
+		},
+	}
+	volumes = append(volumes, v.Spec.Volumes...)
+
+	// Combine default volume mounts with user-defined volume mounts
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "config",
+			MountPath: "/etc/vector",
+		},
+		{
+			Name:      "data",
+			MountPath: v.Spec.DataDir,
+		},
+	}
+	volumeMounts = append(volumeMounts, v.Spec.VolumeMounts...)
+
 	ds := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        v.Name,
@@ -191,38 +225,12 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 									Name:          "api",
 								},
 							},
-							Env:       v.Spec.Env,
-							Resources: v.Spec.Resources,
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "config",
-									MountPath: "/etc/vector",
-								},
-								{
-									Name:      "data",
-									MountPath: v.Spec.DataDir,
-								},
-							},
+							Env:          v.Spec.Env,
+							Resources:    v.Spec.Resources,
+							VolumeMounts: volumeMounts,
 						},
 					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "data",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: "config",
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: v.Name + "-config",
-									},
-								},
-							},
-						},
-					},
+					Volumes: volumes,
 				},
 			},
 		},
@@ -261,6 +269,42 @@ func daemonSetNeedsUpdate(vector *vectorv1alpha1.Vector, daemonset *appsv1.Daemo
 
 	// Check if resources have changed
 	if !reflect.DeepEqual(container.Resources, vector.Spec.Resources) {
+		return true
+	}
+
+	// Check if volumes have changed
+	if !reflect.DeepEqual(daemonset.Spec.Template.Spec.Volumes, append([]corev1.Volume{
+		{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+		{
+			Name: "config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: vector.Name + "-config",
+					},
+				},
+			},
+		},
+	}, vector.Spec.Volumes...)) {
+		return true
+	}
+
+	// Check if volume mounts have changed
+	if !reflect.DeepEqual(container.VolumeMounts, append([]corev1.VolumeMount{
+		{
+			Name:      "config",
+			MountPath: "/etc/vector",
+		},
+		{
+			Name:      "data",
+			MountPath: vector.Spec.DataDir,
+		},
+	}, vector.Spec.VolumeMounts...)) {
 		return true
 	}
 
@@ -444,23 +488,9 @@ func (r *VectorReconciler) reconcileAgent(ctx context.Context, vector *vectorv1a
 
 	// Update daemonset if needed
 	if daemonSetNeedsUpdate(vector, daemonset) {
-		// Update container image, environment variables, and resources
-		daemonset.Spec.Template.Spec.Containers[0].Image = vector.Spec.Image
-		daemonset.Spec.Template.Spec.Containers[0].Env = vector.Spec.Env
-		daemonset.Spec.Template.Spec.Containers[0].Resources = vector.Spec.Resources
-
-		// Update tolerations if they've changed
-		daemonset.Spec.Template.Spec.Tolerations = vector.Spec.Tolerations
-
-		// Update config hash annotation on both the DaemonSet and pod template
-		if daemonset.Annotations == nil {
-			daemonset.Annotations = make(map[string]string)
-		}
-		if daemonset.Spec.Template.Annotations == nil {
-			daemonset.Spec.Template.Annotations = make(map[string]string)
-		}
-		daemonset.Annotations[configHashAnnotation] = vector.Status.ConfigHash
-		daemonset.Spec.Template.Annotations[configHashAnnotation] = vector.Status.ConfigHash
+		// Update container image, environment variables, resources, and volumes
+		newDaemonSet := r.daemonSetForVector(vector)
+		daemonset.Spec = newDaemonSet.Spec
 
 		err = r.Update(ctx, daemonset)
 		if err != nil {

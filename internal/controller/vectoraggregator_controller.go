@@ -100,6 +100,26 @@ func (r *VectorAggregatorReconciler) deploymentForVectorAggregator(v *vectorv1al
 	ls := labelsForVectorAggregator(v.Name)
 	replicas := v.Spec.Replicas
 
+	// Combine default volumes with user-defined volumes
+	volumes := []corev1.Volume{
+		{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+	volumes = append(volumes, v.Spec.Volumes...)
+
+	// Combine default volume mounts with user-defined volume mounts
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "data",
+			MountPath: v.Spec.DataDir,
+		},
+	}
+	volumeMounts = append(volumeMounts, v.Spec.VolumeMounts...)
+
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      v.Name,
@@ -123,19 +143,11 @@ func (r *VectorAggregatorReconciler) deploymentForVectorAggregator(v *vectorv1al
 							ContainerPort: 8686,
 							Name:          "api",
 						}},
-						Env:       v.Spec.Env,
-						Resources: v.Spec.Resources,
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "data",
-							MountPath: v.Spec.DataDir,
-						}},
+						Env:          v.Spec.Env,
+						Resources:    v.Spec.Resources,
+						VolumeMounts: volumeMounts,
 					}},
-					Volumes: []corev1.Volume{{
-						Name: "data",
-						VolumeSource: corev1.VolumeSource{
-							EmptyDir: &corev1.EmptyDirVolumeSource{},
-						},
-					}},
+					Volumes:     volumes,
 					Tolerations: v.Spec.Tolerations,
 				},
 			},
@@ -186,6 +198,32 @@ func needsUpdate(deployment *appsv1.Deployment, v *vectorv1alpha1.VectorAggregat
 
 	// Check if topology spread constraints have changed
 	if !reflect.DeepEqual(deployment.Spec.Template.Spec.TopologySpreadConstraints, v.Spec.TopologySpreadConstraints) {
+		return true
+	}
+
+	// Check if volumes have changed
+	defaultVolumes := []corev1.Volume{
+		{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+	expectedVolumes := append(defaultVolumes, v.Spec.Volumes...)
+	if !reflect.DeepEqual(deployment.Spec.Template.Spec.Volumes, expectedVolumes) {
+		return true
+	}
+
+	// Check if volume mounts have changed
+	defaultVolumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "data",
+			MountPath: v.Spec.DataDir,
+		},
+	}
+	expectedVolumeMounts := append(defaultVolumeMounts, v.Spec.VolumeMounts...)
+	if !reflect.DeepEqual(container.VolumeMounts, expectedVolumeMounts) {
 		return true
 	}
 

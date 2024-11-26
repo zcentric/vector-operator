@@ -81,6 +81,14 @@ type VectorSpec struct {
 	// Resources defines the resource requirements for the Vector container
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Volumes defines additional volumes to be added to the Vector pod
+	// +optional
+	Volumes []corev1.Volume `json:"volumes,omitempty"`
+
+	// VolumeMounts defines additional volume mounts to be added to the Vector container
+	// +optional
+	VolumeMounts []corev1.VolumeMount `json:"volumeMounts,omitempty"`
 }
 
 // VectorStatus defines the observed state of Vector

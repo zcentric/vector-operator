@@ -68,13 +68,28 @@ spec:
         matchLabels:
           app.kubernetes.io/name: vector
           app.kubernetes.io/component: aggregator
-    - maxSkew: 1
-      topologyKey: kubernetes.io/hostname
-      whenUnsatisfiable: ScheduleAnyway
-      labelSelector:
-        matchLabels:
-          app.kubernetes.io/name: vector
-          app.kubernetes.io/component: aggregator
+
+  # Optional: Additional volumes to mount
+  volumes:
+    - name: buffer
+      persistentVolumeClaim:
+        claimName: vector-buffer
+    - name: custom-config
+      configMap:
+        name: vector-custom-config
+    - name: secrets
+      secret:
+        secretName: vector-secrets
+
+  # Optional: Additional volume mounts
+  volumeMounts:
+    - name: buffer
+      mountPath: /var/lib/vector/buffer
+    - name: custom-config
+      mountPath: /etc/vector/custom
+    - name: secrets
+      mountPath: /etc/vector/secrets
+      readOnly: true
 ```
 
 ## Field Descriptions
@@ -85,7 +100,8 @@ spec:
 
 ### Optional Fields
 
-- `replicas`: Number of Vector aggregator pods to run
+- `replicas`: Number of Vector aggregator pods to run (default: 1)
+
 - `api`: Configuration for Vector's API server
   - `address`: The address to bind the API server to
   - `enabled`: Whether to enable the API server
@@ -103,10 +119,27 @@ spec:
   - `limits`: Maximum allowed resources
 
 - `topologySpreadConstraints`: Rules for distributing pods across topology domains
-  - `maxSkew`: Maximum difference in number of pods between topology domains
+  - `maxSkew`: Maximum difference in number of pods between domains
   - `topologyKey`: The key of node labels representing the topology domain
   - `whenUnsatisfiable`: What to do when constraints cannot be met
   - `labelSelector`: Labels used to identify pods for spreading
+
+- `volumes`: Additional Kubernetes volumes to add to the pod
+  - Supports all Kubernetes volume types (ConfigMap, Secret, PVC, etc.)
+  - These are added alongside the default data volume
+
+- `volumeMounts`: Additional volume mounts for the Vector container
+  - Specifies how volumes should be mounted in the container
+  - These are added alongside the default data mount
+
+## Default Volumes
+
+The Vector operator automatically creates and mounts the following volume:
+
+1. `data` volume:
+   - Type: emptyDir
+   - Mount path: Value of `spec.data_dir`
+   - Used for temporary Vector data storage
 
 ## Usage
 
@@ -146,6 +179,13 @@ spec:
         matchLabels:
           app.kubernetes.io/name: vector
           app.kubernetes.io/component: aggregator
+  volumes:
+    - name: buffer
+      persistentVolumeClaim:
+        claimName: vector-buffer
+  volumeMounts:
+    - name: buffer
+      mountPath: /var/lib/vector/buffer
 ```
 
-This example deploys a highly available Vector aggregator with 3 replicas, distributed across availability zones, with defined resource limits and API enabled. The Vector operator will create a Deployment that ensures the specified number of Vector aggregator pods are running and properly distributed across the cluster.
+This example deploys a highly available Vector aggregator with 3 replicas, distributed across availability zones, with persistent storage for buffers. The Vector operator will create a Deployment that ensures the specified number of Vector aggregator pods are running and properly distributed across the cluster.
