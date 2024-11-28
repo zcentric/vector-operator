@@ -33,6 +33,20 @@ jobs:
         setup-envtest use 1.28.0
         echo "KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.0 --bin-dir /tmp/envtest -p path)" >> $GITHUB_ENV
 
+    - name: Create k3s Cluster
+      uses: AbsaOSS/k3d-action@v2
+      with:
+        cluster-name: "test-cluster"
+        args: >-
+          --agents 1
+          --no-lb
+          --k3s-arg "--no-deploy=traefik,servicelb,metrics-server@server:*"
+
+    - name: Get cluster info
+      run: |
+        kubectl cluster-info
+        kubectl get nodes
+
     - name: Run unit tests
       run: go test -v ./internal/controller/... -coverprofile=coverage.out
 
