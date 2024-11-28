@@ -1,7 +1,5 @@
 # Vector Operator
 
-[![Go Tests](https://github.com/zcentric/vector-operator/actions/workflows/go-test.yml/badge.svg)](https://github.com/zcentric/vector-operator/actions/workflows/go-test.yml)
-
 A Kubernetes operator that simplifies the deployment and management of [Vector](https://vector.dev/) observability pipelines in your Kubernetes cluster. This operator enables declarative configuration of Vector agents and data pipelines, making it easier to collect, transform, and forward observability data.
 
 ## Overview
