@@ -136,7 +136,7 @@ func (r *VectorAggregatorReconciler) deploymentForVectorAggregator(v *vectorv1al
 				},
 				Spec: corev1.PodSpec{
 					TopologySpreadConstraints: v.Spec.TopologySpreadConstraints,
-					ImagePullSecrets:         v.Spec.ImagePullSecrets,
+					ImagePullSecrets:          v.Spec.ImagePullSecrets,
 					Containers: []corev1.Container{{
 						Image: v.Spec.Image,
 						Name:  "vector",

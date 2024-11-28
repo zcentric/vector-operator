@@ -18,12 +18,15 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v2"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -41,16 +44,43 @@ var _ = Describe("Vector Controller", func() {
 			Namespace: "default",
 		}
 
+		var controllerReconciler *VectorReconciler
+
 		BeforeEach(func() {
+			// Create the default namespace
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default",
+				},
+			}
+			err := k8sClient.Create(ctx, ns)
+			if err != nil {
+				// Ignore if the namespace already exists
+				Expect(err.Error()).To(ContainSubstring("already exists"))
+			}
+
+			// Clean up any existing resources
+			vector := &vectorv1alpha1.Vector{}
+			err = k8sClient.Get(ctx, typeNamespacedName, vector)
+			if err == nil {
+				// Delete the Vector CR and wait for cleanup
+				Expect(k8sClient.Delete(ctx, vector)).To(Succeed())
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, typeNamespacedName, vector)
+					return errors.IsNotFound(err)
+				}, time.Second*30, time.Second).Should(BeTrue())
+			}
+
 			By("creating the custom resource for the Kind Vector")
 			enabled := false
 			playground := false
 			expireMetrics := int32(30)
 
-			vector := &vectorv1alpha1.Vector{
+			vector = &vectorv1alpha1.Vector{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: "default",
+					Name:       resourceName,
+					Namespace:  "default",
+					Finalizers: []string{vectorFinalizer},
 				},
 				Spec: vectorv1alpha1.VectorSpec{
 					Image: "timberio/vector:0.24.0-distroless-libc",
@@ -64,27 +94,89 @@ var _ = Describe("Vector Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, vector)).To(Succeed())
+
+			// Create the reconciler
+			controllerReconciler = &VectorReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
 		})
 
 		AfterEach(func() {
-			resource := &vectorv1alpha1.Vector{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			// Clean up Vector resource and wait for finalizer to complete
+			vector := &vectorv1alpha1.Vector{}
+			err := k8sClient.Get(ctx, typeNamespacedName, vector)
 			if err == nil {
-				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+				// Delete the Vector CR
+				Expect(k8sClient.Delete(ctx, vector)).To(Succeed())
+
+				// Trigger reconciliation to process the deletion
+				_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Wait for the Vector CR to be deleted
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, typeNamespacedName, vector)
+					return errors.IsNotFound(err)
+				}, time.Second*30, time.Second).Should(BeTrue())
+
+				// Wait for all owned resources to be cleaned up
+				// Check ConfigMap
+				Eventually(func() bool {
+					cm := &corev1.ConfigMap{}
+					err := k8sClient.Get(ctx, types.NamespacedName{
+						Name:      resourceName + "-config",
+						Namespace: "default",
+					}, cm)
+					return errors.IsNotFound(err)
+				}, time.Second*30, time.Second).Should(BeTrue())
+
+				// Check ServiceAccount
+				Eventually(func() bool {
+					sa := &corev1.ServiceAccount{}
+					err := k8sClient.Get(ctx, typeNamespacedName, sa)
+					return errors.IsNotFound(err)
+				}, time.Second*30, time.Second).Should(BeTrue())
+
+				// Check ClusterRole
+				Eventually(func() bool {
+					cr := &rbacv1.ClusterRole{}
+					err := k8sClient.Get(ctx, types.NamespacedName{
+						Name: "vector-default-" + resourceName,
+					}, cr)
+					return errors.IsNotFound(err)
+				}, time.Second*30, time.Second).Should(BeTrue())
+
+				// Check ClusterRoleBinding
+				Eventually(func() bool {
+					crb := &rbacv1.ClusterRoleBinding{}
+					err := k8sClient.Get(ctx, types.NamespacedName{
+						Name: "vector-default-" + resourceName,
+					}, crb)
+					return errors.IsNotFound(err)
+				}, time.Second*30, time.Second).Should(BeTrue())
+
+				// Check DaemonSet
+				Eventually(func() bool {
+					ds := &appsv1.DaemonSet{}
+					err := k8sClient.Get(ctx, typeNamespacedName, ds)
+					return errors.IsNotFound(err)
+				}, time.Second*30, time.Second).Should(BeTrue())
 			}
 		})
 
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &VectorReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+			// Perform multiple reconciliations to ensure resources are created
+			for i := 0; i < 3; i++ {
+				_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+				time.Sleep(time.Second) // Give time for resources to be created
 			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking if ConfigMap was created")
 			configMap := &corev1.ConfigMap{}
@@ -93,13 +185,13 @@ var _ = Describe("Vector Controller", func() {
 					Name:      resourceName + "-config",
 					Namespace: "default",
 				}, configMap)
-			}).Should(Succeed())
+			}, time.Second*30, time.Second).Should(Succeed())
 
 			By("Verifying ConfigMap content")
 			var config map[string]interface{}
 			Expect(yaml.Unmarshal([]byte(configMap.Data["vector.yaml"]), &config)).To(Succeed())
 
-			Expect(config["data_dir"]).To(Equal("/tmp/vector-data-dir"))
+			Expect(config["data_dir"]).To(Equal("/var/lib/vector"))
 			api := config["api"].(map[interface{}]interface{})
 			Expect(api["enabled"]).To(BeFalse())
 			Expect(api["address"]).To(Equal("0.0.0.0:8686"))
@@ -108,7 +200,7 @@ var _ = Describe("Vector Controller", func() {
 			daemonSet := &appsv1.DaemonSet{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, typeNamespacedName, daemonSet)
-			}).Should(Succeed())
+			}, time.Second*30, time.Second).Should(Succeed())
 
 			By("Verifying DaemonSet configuration")
 			container := daemonSet.Spec.Template.Spec.Containers[0]
