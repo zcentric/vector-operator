@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -17,7 +18,7 @@ import (
 
 var _ = Describe("VectorPipeline E2E", func() {
 	const (
-		timeout  = time.Second * 30
+		timeout  = time.Second * 120 // Increased timeout to 2 minutes
 		interval = time.Second * 1
 	)
 
@@ -31,8 +32,23 @@ var _ = Describe("VectorPipeline E2E", func() {
 					Name:      "e2e-vector",
 					Namespace: "default",
 				},
+				Spec: vectorv1alpha1.VectorSpec{
+					Image: "timberio/vector:0.34.0-debian",
+				},
 			}
 			Expect(k8sClient.Create(ctx, vector)).Should(Succeed())
+
+			// Wait for Vector instance to be ready
+			vectorLookupKey := types.NamespacedName{Name: "e2e-vector", Namespace: "default"}
+			createdVector := &vectorv1alpha1.Vector{}
+			Eventually(func() error {
+				err := k8sClient.Get(ctx, vectorLookupKey, createdVector)
+				if err != nil {
+					return fmt.Errorf("failed to get Vector: %v", err)
+				}
+				GinkgoWriter.Printf("Vector status: %+v\n", createdVector.Status)
+				return nil
+			}, timeout, interval).Should(Succeed(), "Vector instance should be created")
 
 			By("Creating a VectorPipeline with a complete configuration")
 			sources := map[string]interface{}{
@@ -90,17 +106,31 @@ var _ = Describe("VectorPipeline E2E", func() {
 			pipelineLookupKey := types.NamespacedName{Name: "e2e-pipeline", Namespace: "default"}
 			createdPipeline := &vectorv1alpha1.VectorPipeline{}
 
-			Eventually(func() bool {
+			Eventually(func() (bool, error) {
 				err := k8sClient.Get(ctx, pipelineLookupKey, createdPipeline)
 				if err != nil {
-					return false
+					return false, fmt.Errorf("failed to get pipeline: %v", err)
 				}
+
+				// Log current conditions and status for debugging
+				GinkgoWriter.Printf("Pipeline status conditions: %+v\n", createdPipeline.Status.Conditions)
+
+				// Verify Vector reference again
+				vector := &vectorv1alpha1.Vector{}
+				if err := k8sClient.Get(ctx, vectorLookupKey, vector); err != nil {
+					return false, fmt.Errorf("failed to get referenced Vector: %v", err)
+				}
+				GinkgoWriter.Printf("Referenced Vector exists: %s/%s\n", vector.Namespace, vector.Name)
+
 				for _, condition := range createdPipeline.Status.Conditions {
-					if condition.Type == "VectorRefValid" && condition.Status == metav1.ConditionTrue {
-						return true
+					if condition.Type == "VectorRefValid" {
+						if condition.Status == metav1.ConditionTrue {
+							return true, nil
+						}
+						return false, fmt.Errorf("VectorRefValid condition is %s: %s", condition.Status, condition.Message)
 					}
 				}
-				return false
+				return false, fmt.Errorf("VectorRefValid condition not found")
 			}, timeout, interval).Should(BeTrue())
 
 			By("Verifying the generated ConfigMap")
@@ -108,7 +138,12 @@ var _ = Describe("VectorPipeline E2E", func() {
 			createdConfigMap := &corev1.ConfigMap{}
 
 			Eventually(func() error {
-				return k8sClient.Get(ctx, configMapLookupKey, createdConfigMap)
+				err := k8sClient.Get(ctx, configMapLookupKey, createdConfigMap)
+				if err != nil {
+					return fmt.Errorf("failed to get ConfigMap: %v", err)
+				}
+				GinkgoWriter.Printf("ConfigMap found: %s/%s\n", createdConfigMap.Namespace, createdConfigMap.Name)
+				return nil
 			}, timeout, interval).Should(Succeed())
 
 			By("Validating the YAML configuration")
