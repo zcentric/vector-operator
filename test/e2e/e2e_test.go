@@ -17,106 +17,48 @@ limitations under the License.
 package e2e
 
 import (
-	"fmt"
-	"os/exec"
+	"context"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/zcentric/vector-operator/test/utils"
+	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
-const namespace = "vector-operator-system"
-
 var _ = Describe("controller", Ordered, func() {
-	BeforeAll(func() {
-		By("installing prometheus operator")
-		Expect(utils.InstallPrometheusOperator()).To(Succeed())
-
-		By("installing the cert-manager")
-		Expect(utils.InstallCertManager()).To(Succeed())
-
-		By("creating manager namespace")
-		cmd := exec.Command("kubectl", "create", "ns", namespace)
-		_, _ = utils.Run(cmd)
-	})
-
-	AfterAll(func() {
-		By("uninstalling the Prometheus manager bundle")
-		utils.UninstallPrometheusOperator()
-
-		By("uninstalling the cert-manager bundle")
-		utils.UninstallCertManager()
-
-		By("removing manager namespace")
-		cmd := exec.Command("kubectl", "delete", "ns", namespace)
-		_, _ = utils.Run(cmd)
-	})
-
 	Context("Operator", func() {
 		It("should run successfully", func() {
-			var controllerPodName string
-			var err error
+			ctx := context.Background()
 
-			// projectimage stores the name of the image used in the example
-			var projectimage = "example.com/vector-operator:v0.0.1"
-
-			By("building the manager(Operator) image")
-			cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectimage))
-			_, err = utils.Run(cmd)
-			ExpectWithOffset(1, err).NotTo(HaveOccurred())
-
-			By("loading the the manager(Operator) image on Kind")
-			err = utils.LoadImageToKindClusterWithName(projectimage)
-			ExpectWithOffset(1, err).NotTo(HaveOccurred())
-
-			By("installing CRDs")
-			cmd = exec.Command("make", "install")
-			_, err = utils.Run(cmd)
-			ExpectWithOffset(1, err).NotTo(HaveOccurred())
-
-			By("deploying the controller-manager")
-			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectimage))
-			_, err = utils.Run(cmd)
-			ExpectWithOffset(1, err).NotTo(HaveOccurred())
-
-			By("validating that the controller-manager pod is running as expected")
-			verifyControllerUp := func() error {
-				// Get pod name
-
-				cmd = exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
-					"-o", "go-template={{ range .items }}"+
-						"{{ if not .metadata.deletionTimestamp }}"+
-						"{{ .metadata.name }}"+
-						"{{ \"\\n\" }}{{ end }}{{ end }}",
-					"-n", namespace,
-				)
-
-				podOutput, err := utils.Run(cmd)
-				ExpectWithOffset(2, err).NotTo(HaveOccurred())
-				podNames := utils.GetNonEmptyLines(string(podOutput))
-				if len(podNames) != 1 {
-					return fmt.Errorf("expect 1 controller pods running, but got %d", len(podNames))
-				}
-				controllerPodName = podNames[0]
-				ExpectWithOffset(2, controllerPodName).Should(ContainSubstring("controller-manager"))
-
-				// Validate pod status
-				cmd = exec.Command("kubectl", "get",
-					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
-					"-n", namespace,
-				)
-				status, err := utils.Run(cmd)
-				ExpectWithOffset(2, err).NotTo(HaveOccurred())
-				if string(status) != "Running" {
-					return fmt.Errorf("controller pod in %s status", status)
-				}
-				return nil
+			By("Creating a Vector instance")
+			vector := &vectorv1alpha1.Vector{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-vector",
+					Namespace: "default",
+				},
+				Spec: vectorv1alpha1.VectorSpec{
+					Image: "timberio/vector:0.34.0-debian",
+				},
 			}
-			EventuallyWithOffset(1, verifyControllerUp, time.Minute, time.Second).Should(Succeed())
+			Expect(k8sClient.Create(ctx, vector)).Should(Succeed())
 
+			By("Verifying Vector status")
+			vectorLookupKey := types.NamespacedName{Name: "test-vector", Namespace: "default"}
+			createdVector := &vectorv1alpha1.Vector{}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, vectorLookupKey, createdVector)
+				if err != nil {
+					return false
+				}
+				GinkgoWriter.Printf("Vector status: %+v\n", createdVector.Status)
+				return createdVector.Status.ConfigHash != ""
+			}, time.Second*10, time.Second*1).Should(BeTrue())
+
+			By("Cleaning up Vector instance")
+			Expect(k8sClient.Delete(ctx, vector)).Should(Succeed())
 		})
 	})
 })

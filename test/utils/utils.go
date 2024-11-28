@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	prometheusOperatorVersion = "v0.72.0"
+	prometheusOperatorVersion = "v0.65.1" // Using an older version that doesn't have the annotation issue
 	prometheusOperatorURL     = "https://github.com/prometheus-operator/prometheus-operator/" +
 		"releases/download/%s/bundle.yaml"
 
@@ -41,8 +41,19 @@ func warnError(err error) {
 // InstallPrometheusOperator installs the prometheus Operator to be used to export the enabled metrics.
 func InstallPrometheusOperator() error {
 	url := fmt.Sprintf(prometheusOperatorURL, prometheusOperatorVersion)
-	cmd := exec.Command("kubectl", "create", "-f", url)
+	cmd := exec.Command("kubectl", "apply", "-f", url)
 	_, err := Run(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Wait for prometheus operator deployment to be ready
+	cmd = exec.Command("kubectl", "wait", "deployment.apps/prometheus-operator",
+		"--for", "condition=Available",
+		"--namespace", "default",
+		"--timeout", "5m",
+	)
+	_, err = Run(cmd)
 	return err
 }
 
