@@ -53,12 +53,12 @@ jobs:
     - name: Run e2e tests
       run: go test -v ./test/e2e/... -coverprofile=e2e-coverage.out
 
-    - name: Upload coverage reports
-      uses: codecov/codecov-action@v4
-      with:
-        files: ./coverage.out,./e2e-coverage.out
-        flags: unittests,e2etests
-        name: codecov-umbrella
-        fail_ci_if_error: true
-        verbose: true
-        token: ${{ secrets.CODECOV_TOKEN }}
+    # - name: Upload coverage reports
+    #   uses: codecov/codecov-action@v4
+    #   with:
+    #     files: ./coverage.out,./e2e-coverage.out
+    #     flags: unittests,e2etests
+    #     name: codecov-umbrella
+    #     fail_ci_if_error: true
+    #     verbose: true
+    #     token: ${{ secrets.CODECOV_TOKEN }}
