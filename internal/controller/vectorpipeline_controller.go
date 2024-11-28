@@ -33,7 +33,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
-	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -81,11 +80,11 @@ const (
 	VectorRefCondition = "VectorRefValid"
 )
 
-//+kubebuilder:rbac:groups=vectorpipeline.zcentric.com,resources=vectorpipelines,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=vectorpipeline.zcentric.com,resources=vectorpipelines/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=vectorpipeline.zcentric.com,resources=vectorpipelines/finalizers,verbs=update
+//+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectorpipelines,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectorpipelines/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectorpipelines/finalizers,verbs=update
 //+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors,verbs=get;list;watch;update;patch
-//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;update;patch
 
 // updateVectorMetrics updates the Vector CR count metric
@@ -125,7 +124,7 @@ func (r *VectorPipelineReconciler) updatePipelineMetrics(ctx context.Context, ve
 	pipelineFailureCount.WithLabelValues(vectorRef).Set(float64(failureCount))
 }
 
-// triggerVectorReconciliation triggers a reconciliation of the referenced Vector and restarts the DaemonSet
+// triggerVectorReconciliation triggers a reconciliation of the referenced Vector
 func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Context, vectorRef string, namespace string) error {
 	logger := log.FromContext(ctx)
 
@@ -146,24 +145,11 @@ func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Conte
 	vector.Annotations["vectorpipeline.zcentric.com/last-update"] = time.Now().Format(time.RFC3339)
 
 	if err := r.Update(ctx, vector); err != nil {
+		logger.Error(err, "Failed to update Vector annotations")
 		return err
 	}
 
-	// Get the DaemonSet
-	ds := &appsv1.DaemonSet{}
-	err = r.Get(ctx, types.NamespacedName{
-		Name:      vectorRef,
-		Namespace: namespace,
-	}, ds)
-	if err != nil {
-		return err
-	}
-
-	logger.Info("Triggering rolling restart of Vector DaemonSet",
-		"name", ds.Name,
-		"namespace", ds.Namespace)
-
-	return r.Update(ctx, ds)
+	return nil
 }
 
 // Reconcile handles the reconciliation loop for VectorPipeline resources
@@ -189,6 +175,11 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"name", vectorPipeline.Name,
 		"namespace", vectorPipeline.Namespace,
 		"vectorRef", vectorPipeline.Spec.VectorRef)
+
+	// Initialize Status.Conditions if it's nil
+	if vectorPipeline.Status.Conditions == nil {
+		vectorPipeline.Status.Conditions = []metav1.Condition{}
+	}
 
 	// Check if the referenced Vector exists
 	vector := &vectorv1alpha1.Vector{}
@@ -217,6 +208,7 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			condition.Status = metav1.ConditionUnknown
 			condition.Reason = "ErrorCheckingVector"
 			condition.Message = "Error occurred while checking Vector reference"
+			return ctrl.Result{Requeue: true}, err
 		}
 	} else {
 		logger.Info("Referenced Vector found",
@@ -226,18 +218,21 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		condition.Reason = "VectorFound"
 		condition.Message = "Referenced Vector exists"
 
-		// Trigger Vector reconciliation to update ConfigMap and restart DaemonSet
+		// Trigger Vector reconciliation to update ConfigMap
 		if err := r.triggerVectorReconciliation(ctx, vectorPipeline.Spec.VectorRef, req.Namespace); err != nil {
 			logger.Error(err, "Failed to trigger Vector reconciliation")
-			return ctrl.Result{}, err
+			return ctrl.Result{Requeue: true}, err
 		}
 	}
 
-	// Update the status
-	meta.SetStatusCondition(&vectorPipeline.Status.Conditions, condition)
-	if err := r.Status().Update(ctx, vectorPipeline); err != nil {
-		logger.Error(err, "Unable to update VectorPipeline status")
-		return ctrl.Result{}, err
+	// Check if condition has changed before updating
+	currentCondition := meta.FindStatusCondition(vectorPipeline.Status.Conditions, VectorRefCondition)
+	if currentCondition == nil || currentCondition.Status != condition.Status {
+		meta.SetStatusCondition(&vectorPipeline.Status.Conditions, condition)
+		if err := r.Status().Update(ctx, vectorPipeline); err != nil {
+			logger.Error(err, "Unable to update VectorPipeline status")
+			return ctrl.Result{Requeue: true}, err
+		}
 	}
 
 	// Update pipeline metrics after status update
