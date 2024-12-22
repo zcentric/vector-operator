@@ -62,13 +62,15 @@ func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, nam
 			},
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:            pointer.Int32(0),
-			TTLSecondsAfterFinished: pointer.Int32(86400), // 24 hours
+			BackoffLimit: pointer.Int32(0),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
 						"app.kubernetes.io/managed-by": "vector-pipeline-controller",
 						"vectorpipeline":               pipelineName,
+					},
+					Annotations: map[string]string{
+						"vector.zcentric.com/validation-start-time": time.Now().Format(time.RFC3339),
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -130,17 +132,6 @@ func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, nam
 	// Wait for validation to complete
 	err := r.waitForValidationJob(ctx, job)
 
-	// If validation succeeded, update TTL to clean up sooner
-	if err == nil {
-		var updatedJob batchv1.Job
-		if err := r.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: job.Namespace}, &updatedJob); err == nil {
-			updatedJob.Spec.TTLSecondsAfterFinished = pointer.Int32(120) // 2 minutes
-			if err := r.Update(ctx, &updatedJob); err != nil {
-				log.FromContext(ctx).Error(err, "Failed to update job TTL after successful validation")
-			}
-		}
-	}
-
 	return err
 }
 
@@ -182,6 +173,58 @@ func (r *VectorPipelineReconciler) waitForValidationJob(ctx context.Context, job
 					return fmt.Errorf("vector configuration validation failed: %s", string(logs))
 				}
 				return fmt.Errorf("vector configuration validation failed")
+			}
+		}
+	}
+}
+
+func (r *VectorPipelineReconciler) cleanupOldValidationJobs(ctx context.Context) {
+	logger := log.FromContext(ctx)
+
+	// List all validation jobs
+	var jobs batchv1.JobList
+	if err := r.List(ctx, &jobs, client.MatchingLabels{"app.kubernetes.io/managed-by": "vector-pipeline-controller"}); err != nil {
+		logger.Error(err, "Failed to list validation jobs")
+		return
+	}
+
+	for _, job := range jobs.Items {
+		// Skip failed jobs
+		if job.Status.Failed > 0 {
+			continue
+		}
+
+		// Check if the job is successful and older than 2 minutes
+		if job.Status.Succeeded > 0 {
+			startTime := job.Spec.Template.ObjectMeta.Annotations["vector.zcentric.com/validation-start-time"]
+			if startTime == "" {
+				continue
+			}
+
+			jobStartTime, err := time.Parse(time.RFC3339, startTime)
+			if err != nil {
+				logger.Error(err, "Failed to parse job start time", "job", job.Name)
+				continue
+			}
+
+			if time.Since(jobStartTime) > 2*time.Minute {
+				// Delete the job
+				if err := r.Delete(ctx, &job); err != nil && !errors.IsNotFound(err) {
+					logger.Error(err, "Failed to delete old validation job", "job", job.Name)
+				}
+
+				// Delete associated pods
+				var pods corev1.PodList
+				if err := r.List(ctx, &pods, client.InNamespace(job.Namespace), client.MatchingLabels(job.Labels)); err != nil {
+					logger.Error(err, "Failed to list validation pods for cleanup")
+					continue
+				}
+
+				for _, pod := range pods.Items {
+					if err := r.Delete(ctx, &pod); err != nil && !errors.IsNotFound(err) {
+						logger.Error(err, "Failed to delete validation pod", "pod", pod.Name)
+					}
+				}
 			}
 		}
 	}

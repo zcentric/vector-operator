@@ -164,6 +164,9 @@ func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Conte
 func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
+	// Clean up old successful validation jobs
+	r.cleanupOldValidationJobs(ctx)
+
 	// Update Vector metrics
 	r.updateVectorMetrics(ctx)
 
