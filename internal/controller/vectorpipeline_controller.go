@@ -36,6 +36,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/prometheus/client_golang/prometheus"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -156,6 +157,34 @@ func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Conte
 		logger.Error(err, "Failed to update Vector annotations")
 		return err
 	}
+
+	return nil
+}
+
+// updateVectorConfigMap updates the Vector's ConfigMap with the validated configuration
+func (r *VectorPipelineReconciler) updateVectorConfigMap(ctx context.Context, vector *vectorv1alpha1.Vector, configYaml string) error {
+	logger := log.FromContext(ctx)
+
+	// Get the Vector's ConfigMap
+	configMap := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      fmt.Sprintf("vector-config-%s", vector.Name),
+		Namespace: vector.Namespace,
+	}, configMap)
+	if err != nil {
+		return fmt.Errorf("failed to get Vector ConfigMap: %w", err)
+	}
+
+	// Update the configuration
+	configMap.Data["vector.yaml"] = configYaml
+
+	// Update the ConfigMap
+	if err := r.Update(ctx, configMap); err != nil {
+		return fmt.Errorf("failed to update Vector ConfigMap: %w", err)
+	}
+
+	logger.Info("Successfully updated Vector ConfigMap with validated configuration",
+		"vector", vector.Name)
 
 	return nil
 }
@@ -299,6 +328,7 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				// Don't requeue - wait for user to fix the configuration
 				return ctrl.Result{}, nil
 			}
+
 			// Set successful validation condition
 			meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
 				Type:               ConfigValidCondition,
@@ -315,15 +345,36 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				logger.Error(err, "Failed to update Vector validation status")
 				return ctrl.Result{}, err
 			}
+
+			// Update status and return to let the next reconciliation handle the ConfigMap update
+			if err := r.Status().Update(ctx, vectorPipeline); err != nil {
+				logger.Error(err, "Unable to update VectorPipeline validation status")
+				return ctrl.Result{}, err
+			}
+			// Return without requeuing - let the Vector controller handle the ConfigMap update
+			return ctrl.Result{}, nil
 		}
 
-		// Only proceed with Vector reconciliation if validation passed
+		// Only update the ConfigMap if validation has passed and we're not in the validation phase
 		validationCondition = meta.FindStatusCondition(vectorPipeline.Status.Conditions, ConfigValidCondition)
-		if validationCondition != nil && validationCondition.Status == metav1.ConditionTrue {
-			// Trigger Vector reconciliation to update ConfigMap
+		if !needsValidation && validationCondition != nil && validationCondition.Status == metav1.ConditionTrue {
+			// Generate the complete config including all validated pipelines
+			completeConfig, err := r.generateConfigForValidation(ctx, vector, vectorPipeline)
+			if err != nil {
+				logger.Error(err, "Failed to generate complete configuration")
+				return ctrl.Result{}, err
+			}
+
+			// Update the ConfigMap with the validated configuration
+			if err := r.updateVectorConfigMap(ctx, vector, completeConfig); err != nil {
+				logger.Error(err, "Failed to update Vector ConfigMap")
+				return ctrl.Result{}, err
+			}
+
+			// Trigger Vector reconciliation to restart pods
 			if err := r.triggerVectorReconciliation(ctx, vectorPipeline.Spec.VectorRef, req.Namespace); err != nil {
 				logger.Error(err, "Failed to trigger Vector reconciliation")
-				return ctrl.Result{Requeue: true}, err
+				return ctrl.Result{}, err
 			}
 		}
 	}
