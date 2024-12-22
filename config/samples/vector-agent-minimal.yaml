@@ -20,6 +20,8 @@ spec:
       type: remap
       inputs:
         - logs
+      source: |
+        .log.message = "hello"
   sinks:
     stdout:
       type: "console"

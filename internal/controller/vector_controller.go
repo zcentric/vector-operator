@@ -40,6 +40,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
+	"github.com/zcentric/vector-operator/internal/utils"
 )
 
 const (
@@ -226,7 +227,7 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 									Name:          "api",
 								},
 							},
-							Env:          mergeEnvVars(getVectorEnvVars(), v.Spec.Env),
+							Env:          utils.MergeEnvVars(utils.GetVectorEnvVars(), v.Spec.Env),
 							Resources:    v.Spec.Resources,
 							VolumeMounts: volumeMounts,
 						},
@@ -760,76 +761,4 @@ func (r *VectorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.ServiceAccount{}).
 		Complete(r)
-}
-
-// Add these environment variables to the Vector container spec
-func getVectorEnvVars() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		{
-			Name:  "VECTOR_LOG",
-			Value: "info",
-		},
-		{
-			Name: "VECTOR_SELF_NODE_NAME",
-			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "spec.nodeName",
-				},
-			},
-		},
-		{
-			Name: "VECTOR_SELF_POD_NAME",
-			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.name",
-				},
-			},
-		},
-		{
-			Name: "VECTOR_SELF_POD_NAMESPACE",
-			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.namespace",
-				},
-			},
-		},
-		{
-			Name:  "PROCFS_ROOT",
-			Value: "/host/proc",
-		},
-		{
-			Name:  "SYSFS_ROOT",
-			Value: "/host/sys",
-		},
-	}
-}
-
-// Then in your Vector container spec creation, merge these with any user-provided env vars:
-func mergeEnvVars(vectorEnv []corev1.EnvVar, userEnv []corev1.EnvVar) []corev1.EnvVar {
-	// Create a map of user-provided env vars for easy lookup
-	userEnvMap := make(map[string]corev1.EnvVar)
-	for _, env := range userEnv {
-		userEnvMap[env.Name] = env
-	}
-
-	// Start with the Vector env vars
-	result := make([]corev1.EnvVar, 0, len(vectorEnv))
-	for _, env := range vectorEnv {
-		// If user provided an override, use that instead
-		if userEnv, exists := userEnvMap[env.Name]; exists {
-			result = append(result, userEnv)
-			delete(userEnvMap, env.Name)
-		} else {
-			result = append(result, env)
-		}
-	}
-
-	// Add remaining user env vars
-	for _, env := range userEnv {
-		if _, exists := userEnvMap[env.Name]; exists {
-			result = append(result, env)
-		}
-	}
-
-	return result
 }
