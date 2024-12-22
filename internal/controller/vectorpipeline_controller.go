@@ -267,14 +267,22 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 		// Check if pipeline needs validation
 		lastValidatedGeneration := vector.Status.ValidatedPipelines[vectorPipeline.Name]
+
+		// Skip validation if we already have a failed validation for this generation
+		if validationCondition != nil &&
+			validationCondition.Status == metav1.ConditionFalse &&
+			validationCondition.ObservedGeneration == vectorPipeline.Generation {
+			logger.Info("Skipping validation as it already failed for this generation",
+				"pipeline", vectorPipeline.Name,
+				"generation", vectorPipeline.Generation)
+			return ctrl.Result{}, nil
+		}
+
 		// Need validation if:
 		// 1. Generation has changed
 		// 2. No previous validation exists
-		// 3. Previous validation failed but the spec has changed
 		needsValidation := lastValidatedGeneration != vectorPipeline.Generation ||
-			(validationCondition == nil) ||
-			(validationCondition.Status == metav1.ConditionFalse &&
-				validationCondition.ObservedGeneration != vectorPipeline.Generation)
+			validationCondition == nil
 
 		logger.Info("Checking validation status",
 			"pipeline", vectorPipeline.Name,
