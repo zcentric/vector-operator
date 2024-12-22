@@ -43,8 +43,11 @@ func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, nam
 		return fmt.Errorf("failed to create validation ConfigMap: %w", err)
 	}
 	defer func() {
+		// Always try to cleanup the ConfigMap
 		if err := r.Delete(context.Background(), validationCM); err != nil {
-			log.FromContext(ctx).Error(err, "Failed to delete validation ConfigMap")
+			if !errors.IsNotFound(err) {
+				log.FromContext(ctx).Error(err, "Failed to delete validation ConfigMap")
+			}
 		}
 	}()
 
@@ -60,7 +63,7 @@ func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, nam
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            pointer.Int32(0),
-			TTLSecondsAfterFinished: pointer.Int32(300),
+			TTLSecondsAfterFinished: pointer.Int32(86400), // 24 hours
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
@@ -123,13 +126,22 @@ func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, nam
 	if err := r.Create(ctx, job); err != nil {
 		return fmt.Errorf("failed to create validation job: %w", err)
 	}
-	defer func() {
-		if err := r.Delete(context.Background(), job); err != nil {
-			log.FromContext(ctx).Error(err, "Failed to delete validation job")
-		}
-	}()
 
-	return r.waitForValidationJob(ctx, job)
+	// Wait for validation to complete
+	err := r.waitForValidationJob(ctx, job)
+
+	// If validation succeeded, update TTL to clean up sooner
+	if err == nil {
+		var updatedJob batchv1.Job
+		if err := r.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: job.Namespace}, &updatedJob); err == nil {
+			updatedJob.Spec.TTLSecondsAfterFinished = pointer.Int32(120) // 2 minutes
+			if err := r.Update(ctx, &updatedJob); err != nil {
+				log.FromContext(ctx).Error(err, "Failed to update job TTL after successful validation")
+			}
+		}
+	}
+
+	return err
 }
 
 func (r *VectorPipelineReconciler) waitForValidationJob(ctx context.Context, job *batchv1.Job) error {

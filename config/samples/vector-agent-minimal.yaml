@@ -21,7 +21,7 @@ spec:
       inputs:
         - logs
       source: |
-        .log.message = "hello"
+        .log.message = "hello2"
   sinks:
     stdout:
       type: "console"
