@@ -15,3 +15,15 @@ spec:
   sources:
     logs:
       type: "kubernetes_logs"
+  transforms:
+    post_parser:
+      type: remap
+      inputs:
+        - logs
+  sinks:
+    stdout:
+      type: "console"
+      inputs:
+        - logs
+      encoding:
+        codec: "json"

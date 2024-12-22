@@ -36,6 +36,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"k8s.io/client-go/kubernetes"
 )
 
 var (
@@ -73,11 +74,13 @@ func init() {
 // VectorPipelineReconciler reconciles a VectorPipeline object
 type VectorPipelineReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme     *runtime.Scheme
+	KubeClient kubernetes.Interface
 }
 
 const (
-	VectorRefCondition = "VectorRefValid"
+	VectorRefCondition   = "VectorRefValid"
+	ConfigValidCondition = "ConfigurationValid"
 )
 
 //+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectorpipelines,verbs=get;list;watch;create;update;patch;delete
@@ -86,6 +89,11 @@ const (
 //+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=pods/log,verbs=get
+//+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors/status,verbs=get;update;patch
 
 // updateVectorMetrics updates the Vector CR count metric
 func (r *VectorPipelineReconciler) updateVectorMetrics(ctx context.Context) {
@@ -218,10 +226,76 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		condition.Reason = "VectorFound"
 		condition.Message = "Referenced Vector exists"
 
-		// Trigger Vector reconciliation to update ConfigMap
-		if err := r.triggerVectorReconciliation(ctx, vectorPipeline.Spec.VectorRef, req.Namespace); err != nil {
-			logger.Error(err, "Failed to trigger Vector reconciliation")
-			return ctrl.Result{Requeue: true}, err
+		// Check if we need to validate the configuration
+		validationCondition := meta.FindStatusCondition(vectorPipeline.Status.Conditions, ConfigValidCondition)
+		// Initialize ValidatedPipelines if nil
+		if vector.Status.ValidatedPipelines == nil {
+			vector.Status.ValidatedPipelines = make(map[string]int64)
+		}
+
+		// Check if pipeline needs validation
+		lastValidatedGeneration := vector.Status.ValidatedPipelines[vectorPipeline.Name]
+		needsValidation := lastValidatedGeneration != vectorPipeline.Generation
+
+		logger.Info("Checking validation status",
+			"pipeline", vectorPipeline.Name,
+			"currentGeneration", vectorPipeline.Generation,
+			"lastValidatedGeneration", lastValidatedGeneration,
+			"needsValidation", needsValidation)
+
+		if needsValidation {
+			// Generate and validate the Vector configuration
+			configYaml := generateVectorConfig(vectorPipeline)
+			if err := r.validateVectorConfig(ctx, req.Namespace, configYaml, vectorPipeline.Name); err != nil {
+				logger.Error(err, "Vector configuration validation failed")
+				// Set validation condition
+				meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
+					Type:               ConfigValidCondition,
+					Status:             metav1.ConditionFalse,
+					Reason:             "ValidationFailed",
+					Message:            fmt.Sprintf("Configuration validation failed: %v", err),
+					ObservedGeneration: vectorPipeline.Generation,
+					LastTransitionTime: metav1.NewTime(time.Now()),
+				})
+				// Remove from validated pipelines if validation fails
+				delete(vector.Status.ValidatedPipelines, vectorPipeline.Name)
+				if err := r.Status().Update(ctx, vector); err != nil {
+					logger.Error(err, "Failed to update Vector validation status")
+					return ctrl.Result{}, err
+				}
+				// Update status and return
+				if err := r.Status().Update(ctx, vectorPipeline); err != nil {
+					logger.Error(err, "Unable to update VectorPipeline validation status")
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, nil
+			}
+			// Set successful validation condition
+			meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
+				Type:               ConfigValidCondition,
+				Status:             metav1.ConditionTrue,
+				Reason:             "ValidationSucceeded",
+				Message:            "Vector configuration validation succeeded",
+				ObservedGeneration: vectorPipeline.Generation,
+				LastTransitionTime: metav1.NewTime(time.Now()),
+			})
+
+			// Update Vector status with validated pipeline
+			vector.Status.ValidatedPipelines[vectorPipeline.Name] = vectorPipeline.Generation
+			if err := r.Status().Update(ctx, vector); err != nil {
+				logger.Error(err, "Failed to update Vector validation status")
+				return ctrl.Result{}, err
+			}
+		}
+
+		// Only proceed with Vector reconciliation if validation passed
+		validationCondition = meta.FindStatusCondition(vectorPipeline.Status.Conditions, ConfigValidCondition)
+		if validationCondition != nil && validationCondition.Status == metav1.ConditionTrue {
+			// Trigger Vector reconciliation to update ConfigMap
+			if err := r.triggerVectorReconciliation(ctx, vectorPipeline.Spec.VectorRef, req.Namespace); err != nil {
+				logger.Error(err, "Failed to trigger Vector reconciliation")
+				return ctrl.Result{Requeue: true}, err
+			}
 		}
 	}
 
@@ -270,4 +344,31 @@ func (r *VectorPipelineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&vectorv1alpha1.Vector{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueRequestsForVector)).
 		Complete(r)
+}
+
+// generateVectorConfig generates the Vector configuration YAML from the VectorPipeline
+func generateVectorConfig(pipeline *vectorv1alpha1.VectorPipeline) string {
+	// TODO: Implement the actual configuration generation logic
+	// This is a placeholder - you'll need to implement the actual logic
+	// based on your VectorPipeline spec
+	return fmt.Sprintf(`---
+api:
+  enabled: true
+  address: 127.0.0.1:8686
+
+# Pipeline configuration will go here
+sources:
+  dummy_logs:
+    type: demo_logs
+    format: syslog
+    interval: 1
+
+sinks:
+  console:
+    type: console
+    inputs:
+      - dummy_logs
+    encoding:
+      codec: json
+`)
 }

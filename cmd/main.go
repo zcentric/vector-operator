@@ -38,6 +38,7 @@ import (
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
 	"github.com/zcentric/vector-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
+	"k8s.io/client-go/kubernetes"
 )
 
 var (
@@ -119,6 +120,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create kubernetes clientset
+	kubeClient, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to create kubernetes client")
+		os.Exit(1)
+	}
+
 	if err = (&controller.VectorReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -128,8 +136,9 @@ func main() {
 	}
 
 	if err = (&controller.VectorPipelineReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		KubeClient: kubeClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VectorPipeline")
 		os.Exit(1)

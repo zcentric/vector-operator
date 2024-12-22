@@ -15,3 +15,9 @@ spec:
   sources:
     logs:
       type: "kubernetes_logs"
+  sinks:
+    console:
+      type: "console"
+      inputs: ["logs"]
+      encoding:
+        codec: "json"

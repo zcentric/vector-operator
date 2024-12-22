@@ -144,7 +144,7 @@ func (r *VectorAggregatorReconciler) deploymentForVectorAggregator(v *vectorv1al
 							ContainerPort: 8686,
 							Name:          "api",
 						}},
-						Env:          v.Spec.Env,
+						Env:          mergeEnvVars(getVectorEnvVars(), v.Spec.Env),
 						Resources:    v.Spec.Resources,
 						VolumeMounts: volumeMounts,
 					}},
@@ -188,7 +188,8 @@ func needsUpdate(deployment *appsv1.Deployment, v *vectorv1alpha1.VectorAggregat
 	}
 
 	// Check if environment variables have changed
-	if !reflect.DeepEqual(container.Env, v.Spec.Env) {
+	expectedEnv := mergeEnvVars(getVectorEnvVars(), v.Spec.Env)
+	if !reflect.DeepEqual(container.Env, expectedEnv) {
 		return true
 	}
 
@@ -239,4 +240,76 @@ func needsUpdate(deployment *appsv1.Deployment, v *vectorv1alpha1.VectorAggregat
 	}
 
 	return false
+}
+
+// Add these environment variables to the Vector container spec
+func getVectorEnvVars() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{
+			Name:  "VECTOR_LOG",
+			Value: "info",
+		},
+		{
+			Name: "VECTOR_SELF_NODE_NAME",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: "spec.nodeName",
+				},
+			},
+		},
+		{
+			Name: "VECTOR_SELF_POD_NAME",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: "metadata.name",
+				},
+			},
+		},
+		{
+			Name: "VECTOR_SELF_POD_NAMESPACE",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: "metadata.namespace",
+				},
+			},
+		},
+		{
+			Name:  "PROCFS_ROOT",
+			Value: "/host/proc",
+		},
+		{
+			Name:  "SYSFS_ROOT",
+			Value: "/host/sys",
+		},
+	}
+}
+
+// Merge user-provided env vars with Vector defaults
+func mergeEnvVars(vectorEnv []corev1.EnvVar, userEnv []corev1.EnvVar) []corev1.EnvVar {
+	// Create a map of user-provided env vars for easy lookup
+	userEnvMap := make(map[string]corev1.EnvVar)
+	for _, env := range userEnv {
+		userEnvMap[env.Name] = env
+	}
+
+	// Start with the Vector env vars
+	result := make([]corev1.EnvVar, 0, len(vectorEnv))
+	for _, env := range vectorEnv {
+		// If user provided an override, use that instead
+		if userEnv, exists := userEnvMap[env.Name]; exists {
+			result = append(result, userEnv)
+			delete(userEnvMap, env.Name)
+		} else {
+			result = append(result, env)
+		}
+	}
+
+	// Add remaining user env vars
+	for _, env := range userEnv {
+		if _, exists := userEnvMap[env.Name]; exists {
+			result = append(result, env)
+		}
+	}
+
+	return result
 }

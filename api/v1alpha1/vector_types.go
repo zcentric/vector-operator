@@ -103,12 +103,18 @@ type VectorStatus struct {
 	// ConfigHash represents the current hash of the Vector configuration
 	// +optional
 	ConfigHash string `json:"configHash,omitempty"`
+
+	// ValidatedPipelines tracks which pipelines have been validated
+	// The key is the pipeline name and the value is the generation that was validated
+	// +optional
+	ValidatedPipelines map[string]int64 `json:"validatedPipelines,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:scope=Namespaced
 //+kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image"
+//+kubebuilder:printcolumn:name="Validated Pipelines",type="string",JSONPath=".status.validatedPipelines"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // Vector is the Schema for the vectors API

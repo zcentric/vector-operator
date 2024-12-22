@@ -182,6 +182,14 @@ install: manifests kustomize
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
 	$(KUSTOMIZE) build config/samples | $(KUBECTL) apply -f -
 
+.PHONY: installcrds
+installcrds: manifests kustomize 
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
+
+.PHONY: uninstallcrds
+uninstallcrds: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
 .PHONY: uninstall
 uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/samples | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
