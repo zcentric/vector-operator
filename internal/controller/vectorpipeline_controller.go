@@ -268,6 +268,12 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		// Check if pipeline needs validation
 		lastValidatedGeneration := vector.Status.ValidatedPipelines[vectorPipeline.Name]
 
+		// Need validation if:
+		// 1. Generation has changed from last validated generation, or
+		// 2. No validation condition exists yet
+		needsValidation := lastValidatedGeneration != vectorPipeline.Generation ||
+			validationCondition == nil
+
 		// Skip validation if we already have a failed validation for this generation
 		if validationCondition != nil &&
 			validationCondition.Status == metav1.ConditionFalse &&
@@ -277,12 +283,6 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				"generation", vectorPipeline.Generation)
 			return ctrl.Result{}, nil
 		}
-
-		// Need validation if:
-		// 1. Generation has changed
-		// 2. No previous validation exists
-		needsValidation := lastValidatedGeneration != vectorPipeline.Generation ||
-			validationCondition == nil
 
 		logger.Info("Checking validation status",
 			"pipeline", vectorPipeline.Name,
@@ -337,6 +337,24 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, nil
 			}
 
+			// Now that validation has succeeded, update the ConfigMap
+			logger.Info("Validation succeeded, updating Vector ConfigMap",
+				"pipeline", vectorPipeline.Name,
+				"generation", vectorPipeline.Generation)
+
+			// Get the complete config including all validated pipelines
+			completeConfig, err := r.generateConfigForValidation(ctx, vector, vectorPipeline)
+			if err != nil {
+				logger.Error(err, "Failed to generate complete configuration")
+				return ctrl.Result{}, err
+			}
+
+			// Update the Vector's ConfigMap with the complete validated configuration
+			if err := r.updateVectorConfigMap(ctx, vector, completeConfig); err != nil {
+				logger.Error(err, "Failed to update Vector ConfigMap")
+				return ctrl.Result{}, err
+			}
+
 			// Set successful validation condition
 			meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
 				Type:               ConfigValidCondition,
@@ -354,36 +372,18 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, err
 			}
 
-			// Update status and return to let the next reconciliation handle the ConfigMap update
-			if err := r.Status().Update(ctx, vectorPipeline); err != nil {
-				logger.Error(err, "Unable to update VectorPipeline validation status")
-				return ctrl.Result{}, err
-			}
-			// Return without requeuing - let the Vector controller handle the ConfigMap update
-			return ctrl.Result{}, nil
-		}
-
-		// Only update the ConfigMap if validation has passed and we're not in the validation phase
-		validationCondition = meta.FindStatusCondition(vectorPipeline.Status.Conditions, ConfigValidCondition)
-		if !needsValidation && validationCondition != nil && validationCondition.Status == metav1.ConditionTrue {
-			// Generate the complete config including all validated pipelines
-			completeConfig, err := r.generateConfigForValidation(ctx, vector, vectorPipeline)
-			if err != nil {
-				logger.Error(err, "Failed to generate complete configuration")
-				return ctrl.Result{}, err
-			}
-
-			// Update the ConfigMap with the validated configuration
-			if err := r.updateVectorConfigMap(ctx, vector, completeConfig); err != nil {
-				logger.Error(err, "Failed to update Vector ConfigMap")
-				return ctrl.Result{}, err
-			}
-
 			// Trigger Vector reconciliation to restart pods
 			if err := r.triggerVectorReconciliation(ctx, vectorPipeline.Spec.VectorRef, req.Namespace); err != nil {
 				logger.Error(err, "Failed to trigger Vector reconciliation")
 				return ctrl.Result{}, err
 			}
+
+			// Update status and return
+			if err := r.Status().Update(ctx, vectorPipeline); err != nil {
+				logger.Error(err, "Unable to update VectorPipeline validation status")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
 		}
 	}
 
