@@ -238,17 +238,42 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 		// Check if pipeline needs validation
 		lastValidatedGeneration := vector.Status.ValidatedPipelines[vectorPipeline.Name]
-		needsValidation := lastValidatedGeneration != vectorPipeline.Generation
+		// Need validation if:
+		// 1. Generation has changed
+		// 2. No previous validation exists
+		// 3. Previous validation failed but the spec has changed
+		needsValidation := lastValidatedGeneration != vectorPipeline.Generation ||
+			(validationCondition == nil) ||
+			(validationCondition.Status == metav1.ConditionFalse &&
+				validationCondition.ObservedGeneration != vectorPipeline.Generation)
 
 		logger.Info("Checking validation status",
 			"pipeline", vectorPipeline.Name,
 			"currentGeneration", vectorPipeline.Generation,
 			"lastValidatedGeneration", lastValidatedGeneration,
+			"lastValidationStatus", getValidationStatus(validationCondition),
+			"observedGeneration", getObservedGeneration(validationCondition),
 			"needsValidation", needsValidation)
 
 		if needsValidation {
-			// Generate and validate the Vector configuration
-			configYaml := generateVectorConfig(vectorPipeline)
+			// Generate the complete Vector configuration for validation
+			configYaml, err := r.generateConfigForValidation(ctx, vector, vectorPipeline)
+			if err != nil {
+				logger.Error(err, "Failed to generate Vector configuration")
+				meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
+					Type:               ConfigValidCondition,
+					Status:             metav1.ConditionFalse,
+					Reason:             "ConfigGenerationFailed",
+					Message:            fmt.Sprintf("Failed to generate configuration: %v", err),
+					ObservedGeneration: vectorPipeline.Generation,
+					LastTransitionTime: metav1.NewTime(time.Now()),
+				})
+				if err := r.Status().Update(ctx, vectorPipeline); err != nil {
+					logger.Error(err, "Unable to update VectorPipeline status")
+				}
+				return ctrl.Result{}, err
+			}
+
 			if err := r.validateVectorConfig(ctx, req.Namespace, configYaml, vectorPipeline.Name); err != nil {
 				logger.Error(err, "Vector configuration validation failed")
 				// Set validation condition
@@ -271,6 +296,7 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					logger.Error(err, "Unable to update VectorPipeline validation status")
 					return ctrl.Result{}, err
 				}
+				// Don't requeue - wait for user to fix the configuration
 				return ctrl.Result{}, nil
 			}
 			// Set successful validation condition
@@ -349,29 +375,18 @@ func (r *VectorPipelineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// generateVectorConfig generates the Vector configuration YAML from the VectorPipeline
-func generateVectorConfig(pipeline *vectorv1alpha1.VectorPipeline) string {
-	// TODO: Implement the actual configuration generation logic
-	// This is a placeholder - you'll need to implement the actual logic
-	// based on your VectorPipeline spec
-	return fmt.Sprintf(`---
-api:
-  enabled: true
-  address: 127.0.0.1:8686
+// getValidationStatus returns the status string from a validation condition
+func getValidationStatus(condition *metav1.Condition) string {
+	if condition == nil {
+		return "None"
+	}
+	return string(condition.Status)
+}
 
-# Pipeline configuration will go here
-sources:
-  dummy_logs:
-    type: demo_logs
-    format: syslog
-    interval: 1
-
-sinks:
-  console:
-    type: console
-    inputs:
-      - dummy_logs
-    encoding:
-      codec: json
-`)
+// getObservedGeneration returns the observed generation from a validation condition
+func getObservedGeneration(condition *metav1.Condition) int64 {
+	if condition == nil {
+		return 0
+	}
+	return condition.ObservedGeneration
 }

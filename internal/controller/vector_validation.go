@@ -2,18 +2,121 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	pointer "k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
+	"github.com/zcentric/vector-operator/internal/utils"
 )
+
+func (r *VectorPipelineReconciler) generateConfigForValidation(ctx context.Context, vector *vectorv1alpha1.Vector, pipeline *vectorv1alpha1.VectorPipeline) (string, error) {
+	// Build the configuration sections
+	configData := make(map[string]interface{})
+
+	// Add global options
+	configData["data_dir"] = "/var/lib/vector"
+
+	// Add API configuration
+	apiConfig := map[string]interface{}{
+		"enabled": false,
+	}
+	if vector.Spec.API != nil {
+		apiConfig["enabled"] = *vector.Spec.API.Enabled
+		if vector.Spec.API.Address != "" {
+			apiConfig["address"] = vector.Spec.API.Address
+		}
+	}
+	configData["api"] = apiConfig
+
+	// Initialize sources, transforms, and sinks maps
+	sources := make(map[string]interface{})
+	transforms := make(map[string]interface{})
+	sinks := make(map[string]interface{})
+
+	// Get all VectorPipelines that reference this Vector
+	var pipelineList vectorv1alpha1.VectorPipelineList
+	if err := r.List(ctx, &pipelineList, client.InNamespace(vector.Namespace)); err != nil {
+		return "", fmt.Errorf("failed to list pipelines: %w", err)
+	}
+
+	// Add sources, transforms, and sinks from each pipeline
+	for _, p := range pipelineList.Items {
+		if p.Spec.VectorRef == vector.Name && p.Status.Conditions != nil {
+			// Only include pipelines that have been previously validated
+			// except for the pipeline we're currently validating
+			if p.Name != pipeline.Name {
+				validationCondition := meta.FindStatusCondition(p.Status.Conditions, ConfigValidCondition)
+				if validationCondition == nil || validationCondition.Status != metav1.ConditionTrue {
+					continue
+				}
+			}
+
+			// Process Sources
+			if p.Spec.Sources.Raw != nil {
+				var sourcesMap map[string]interface{}
+				if err := json.Unmarshal(p.Spec.Sources.Raw, &sourcesMap); err != nil {
+					return "", fmt.Errorf("failed to unmarshal Sources: %w", err)
+				}
+				for k, v := range sourcesMap {
+					sources[k] = v
+				}
+			}
+
+			// Process Transforms
+			if p.Spec.Transforms.Raw != nil {
+				var transformsMap map[string]interface{}
+				if err := json.Unmarshal(p.Spec.Transforms.Raw, &transformsMap); err != nil {
+					return "", fmt.Errorf("failed to unmarshal Transforms: %w", err)
+				}
+				for k, v := range transformsMap {
+					transforms[k] = v
+				}
+			}
+
+			// Process Sinks
+			if p.Spec.Sinks.Raw != nil {
+				var sinksMap map[string]interface{}
+				if err := json.Unmarshal(p.Spec.Sinks.Raw, &sinksMap); err != nil {
+					return "", fmt.Errorf("failed to unmarshal Sinks: %w", err)
+				}
+				for k, v := range sinksMap {
+					sinks[k] = v
+				}
+			}
+		}
+	}
+
+	// Add the sections if they have content
+	if len(sources) > 0 {
+		configData["sources"] = sources
+	}
+	if len(transforms) > 0 {
+		configData["transforms"] = transforms
+	}
+	if len(sinks) > 0 {
+		configData["sinks"] = sinks
+	}
+
+	// Convert to YAML
+	configYAML, err := yaml.Marshal(configData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal config to YAML: %w", err)
+	}
+
+	return string(configYAML), nil
+}
 
 func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, namespace string, configYaml string, pipelineName string) error {
 	// Create temporary ConfigMap with unique name
@@ -78,6 +181,7 @@ func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, nam
 						{
 							Name:  "vector-validate",
 							Image: "timberio/vector:latest-alpine",
+							Env:   utils.GetVectorEnvVars(),
 							Command: []string{
 								"/bin/sh",
 								"-c",
