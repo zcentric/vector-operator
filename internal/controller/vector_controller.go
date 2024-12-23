@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -40,11 +41,14 @@ import (
 	"sigs.k8s.io/yaml"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
+	"github.com/zcentric/vector-operator/internal/utils"
 )
 
 const (
 	vectorFinalizer      = "vector.zcentric.com/finalizer"
 	configHashAnnotation = "vector.zcentric.com/config-hash"
+	// VectorReadyCondition represents the Ready condition for the Vector
+	VectorReadyCondition = "Ready"
 )
 
 // VectorReconciler reconciles a Vector object
@@ -132,6 +136,22 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
+	// Check if all pipelines are validated before proceeding with any updates
+	allPipelinesValidated := true
+	for _, status := range vector.Status.PipelineValidationStatus {
+		if status.Status != "Validated" {
+			allPipelinesValidated = false
+			logger.Info("Skipping DaemonSet update as not all pipelines are validated",
+				"pipeline_status", status)
+			break
+		}
+	}
+
+	if !allPipelinesValidated {
+		logger.Info("Skipping DaemonSet update until all pipelines are validated")
+		return ctrl.Result{}, nil
+	}
+
 	// Store the config hash in the Vector status if it has changed
 	if vector.Status.ConfigHash != configHash {
 		vector.Status.ConfigHash = configHash
@@ -144,7 +164,17 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// Reconcile the DaemonSet
-	return r.reconcileAgent(ctx, vector)
+	if result, err := r.reconcileAgent(ctx, vector); err != nil {
+		return result, err
+	}
+
+	// After all other status updates
+	if err := r.updateReadyCondition(ctx, vector); err != nil {
+		logger.Error(err, "Failed to update Ready condition")
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
 }
 
 // daemonSetForVector returns a vector DaemonSet object
@@ -226,7 +256,7 @@ func (r *VectorReconciler) daemonSetForVector(v *vectorv1alpha1.Vector) *appsv1.
 									Name:          "api",
 								},
 							},
-							Env:          v.Spec.Env,
+							Env:          utils.MergeEnvVars(utils.GetVectorEnvVars(), v.Spec.Env),
 							Resources:    v.Spec.Resources,
 							VolumeMounts: volumeMounts,
 						},
@@ -350,6 +380,16 @@ func (r *VectorReconciler) reconcileConfigMap(ctx context.Context, v *vectorv1al
 	var pipelineList vectorv1alpha1.VectorPipelineList
 	if err := r.List(ctx, &pipelineList, client.InNamespace(v.Namespace)); err != nil {
 		return "", err
+	}
+
+	// Check if any pipelines have failed validation
+	for pipelineName, status := range v.Status.PipelineValidationStatus {
+		if status.Status == "Failed" {
+			logger.Info("Skipping ConfigMap reconciliation due to failed pipeline validation",
+				"pipeline", pipelineName,
+				"reason", status.Message)
+			return "", nil
+		}
 	}
 
 	// Initialize sources, transforms, and sinks maps
@@ -760,4 +800,45 @@ func (r *VectorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.ServiceAccount{}).
 		Complete(r)
+}
+
+// updateReadyCondition updates the Ready condition based on pipeline validations
+func (r *VectorReconciler) updateReadyCondition(ctx context.Context, vector *vectorv1alpha1.Vector) error {
+	// Initialize conditions if nil
+	if vector.Status.Conditions == nil {
+		vector.Status.Conditions = []metav1.Condition{}
+	}
+
+	// Check if any pipelines have failed validation
+	hasFailedPipelines := false
+	for _, status := range vector.Status.PipelineValidationStatus {
+		if status.Status == "Failed" {
+			hasFailedPipelines = true
+			break
+		}
+	}
+
+	// Set the Ready condition
+	readyCondition := metav1.Condition{
+		Type:               VectorReadyCondition,
+		ObservedGeneration: vector.Generation,
+		LastTransitionTime: metav1.NewTime(time.Now()),
+	}
+
+	if hasFailedPipelines {
+		readyCondition.Status = metav1.ConditionFalse
+		readyCondition.Reason = "ValidationFailed"
+		readyCondition.Message = "One or more pipelines failed validation"
+	} else if len(vector.Status.PipelineValidationStatus) == 0 {
+		readyCondition.Status = metav1.ConditionUnknown
+		readyCondition.Reason = "NoPipelines"
+		readyCondition.Message = "No pipelines configured"
+	} else {
+		readyCondition.Status = metav1.ConditionTrue
+		readyCondition.Reason = "AllPipelinesValid"
+		readyCondition.Message = "All pipelines validated successfully"
+	}
+
+	meta.SetStatusCondition(&vector.Status.Conditions, readyCondition)
+	return r.Status().Update(ctx, vector)
 }

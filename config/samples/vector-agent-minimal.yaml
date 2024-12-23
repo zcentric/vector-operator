@@ -15,3 +15,17 @@ spec:
   sources:
     logs:
       type: "kubernetes_logs"
+  transforms:
+    post_parser:
+      type: remap
+      inputs:
+        - logs
+      source: |
+        .log.message = "fail22"
+  sinks:
+    stdout:
+      type: "console"
+      inputs:
+        - logs2
+      encoding:
+        codec: "json"

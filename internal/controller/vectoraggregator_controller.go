@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
+	"github.com/zcentric/vector-operator/internal/utils"
 )
 
 // VectorAggregatorReconciler reconciles a VectorAggregator object
@@ -144,7 +145,7 @@ func (r *VectorAggregatorReconciler) deploymentForVectorAggregator(v *vectorv1al
 							ContainerPort: 8686,
 							Name:          "api",
 						}},
-						Env:          v.Spec.Env,
+						Env:          utils.MergeEnvVars(utils.GetVectorEnvVars(), v.Spec.Env),
 						Resources:    v.Spec.Resources,
 						VolumeMounts: volumeMounts,
 					}},
@@ -188,7 +189,8 @@ func needsUpdate(deployment *appsv1.Deployment, v *vectorv1alpha1.VectorAggregat
 	}
 
 	// Check if environment variables have changed
-	if !reflect.DeepEqual(container.Env, v.Spec.Env) {
+	expectedEnv := utils.MergeEnvVars(utils.GetVectorEnvVars(), v.Spec.Env)
+	if !reflect.DeepEqual(container.Env, expectedEnv) {
 		return true
 	}
 

@@ -103,12 +103,40 @@ type VectorStatus struct {
 	// ConfigHash represents the current hash of the Vector configuration
 	// +optional
 	ConfigHash string `json:"configHash,omitempty"`
+
+	// ValidatedPipelines tracks which pipelines have been validated and their generation
+	// +optional
+	ValidatedPipelines map[string]int64 `json:"validatedPipelines,omitempty"`
+
+	// PipelineValidationStatus shows the validation status of each pipeline
+	// +optional
+	PipelineValidationStatus map[string]PipelineValidation `json:"pipelineValidationStatus,omitempty"`
+}
+
+// PipelineValidation represents the validation status of a pipeline
+// +k8s:deepcopy-gen=true
+type PipelineValidation struct {
+	// Status indicates if the pipeline is validated
+	// +kubebuilder:validation:Enum=Validated;Failed
+	Status string `json:"status"`
+
+	// Message provides additional details about the validation
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// LastValidated is the timestamp of the last validation
+	// +optional
+	LastValidated metav1.Time `json:"lastValidated,omitempty"`
+
+	// Generation is the generation of the pipeline that was validated
+	Generation int64 `json:"generation"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:scope=Namespaced
 //+kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image"
+//+kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // Vector is the Schema for the vectors API
