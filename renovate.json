@@ -1,0 +1,22 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "vulnerabilityAlerts": {
+    "addLabels": ["security"]
+  },
+  "prHourlyLimit": 10,
+  "packageRules": [
+    {
+      "matchDepTypes": [
+        "action"
+      ],
+      "pinDigests": true
+    }
+  ]
+}
