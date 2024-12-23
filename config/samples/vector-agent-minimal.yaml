@@ -19,9 +19,9 @@ spec:
     post_parser:
       type: remap
       inputs:
-        - logs2
+        - logs
       source: |
-        .log.message = "success"
+        .log.message = "success 2"
   sinks:
     stdout:
       type: "console"

@@ -121,6 +121,12 @@ func (r *VectorPipelineReconciler) generateConfigForValidation(ctx context.Conte
 func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, namespace, validationConfigMapName, pipelineName string, vectorPipeline *vectorv1alpha1.VectorPipeline) error {
 	logger := log.FromContext(ctx)
 
+	// Clean up any completed validation pods for this pipeline before starting a new validation
+	if err := r.cleanupCompletedValidationPods(ctx, namespace, pipelineName); err != nil {
+		logger.Error(err, "Failed to cleanup completed validation pods")
+		// Continue with validation even if cleanup fails
+	}
+
 	// Create a unique job name for this validation
 	jobName := fmt.Sprintf("vector-validate-%s", pipelineName)
 
@@ -396,4 +402,32 @@ func (r *VectorPipelineReconciler) cleanupOldValidationJobs(ctx context.Context)
 			}
 		}
 	}
+}
+
+// cleanupCompletedValidationPods removes all completed validation pods for a specific pipeline
+func (r *VectorPipelineReconciler) cleanupCompletedValidationPods(ctx context.Context, namespace, pipelineName string) error {
+	logger := log.FromContext(ctx)
+
+	// List all validation pods for this pipeline
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods,
+		client.InNamespace(namespace),
+		client.MatchingLabels{
+			"app.kubernetes.io/managed-by": "vector-pipeline-controller",
+			"vectorpipeline":               pipelineName,
+		}); err != nil {
+		return fmt.Errorf("failed to list validation pods: %w", err)
+	}
+
+	// Delete completed pods
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			if err := r.Delete(ctx, &pod); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete completed validation pod", "pod", pod.Name)
+			} else {
+				logger.Info("Deleted completed validation pod", "pod", pod.Name)
+			}
+		}
+	}
+	return nil
 }
