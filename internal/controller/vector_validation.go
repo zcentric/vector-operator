@@ -324,7 +324,21 @@ func (r *VectorPipelineReconciler) waitForValidationJob(ctx context.Context, job
 					if err != nil {
 						return fmt.Errorf("validation failed, unable to get error logs: %w", err)
 					}
+					// Update pipeline status with validation failure
+					vectorPipeline.Status.ValidationStatus = "Failed"
+					vectorPipeline.Status.LastValidationTime = &metav1.Time{Time: time.Now()}
+					vectorPipeline.Status.LastValidationError = string(logs)
+					if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
+						logger.Error(err, "Failed to update pipeline status with validation failure")
+					}
 					return fmt.Errorf("vector configuration validation failed: %s", string(logs))
+				}
+				// Update pipeline status with validation failure (no logs available)
+				vectorPipeline.Status.ValidationStatus = "Failed"
+				vectorPipeline.Status.LastValidationTime = &metav1.Time{Time: time.Now()}
+				vectorPipeline.Status.LastValidationError = "Vector configuration validation failed"
+				if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
+					logger.Error(err, "Failed to update pipeline status with validation failure")
 				}
 				return fmt.Errorf("vector configuration validation failed")
 			}

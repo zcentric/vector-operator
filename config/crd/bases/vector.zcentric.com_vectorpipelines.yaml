@@ -21,6 +21,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="VectorRefValid")].status
       name: Status
       type: string
+    - jsonPath: .status.validationStatus
+      name: Validation
+      type: string
     - jsonPath: .status.conditions[?(@.type=="VectorRefValid")].message
       name: Message
       type: string
@@ -144,6 +147,24 @@ spec:
                   - type
                   type: object
                 type: array
+              lastValidatedGeneration:
+                description: LastValidatedGeneration is the last generation that was
+                  successfully validated
+                format: int64
+                type: integer
+              lastValidationError:
+                description: LastValidationError contains the error message from the
+                  last failed validation
+                type: string
+              lastValidationTime:
+                description: LastValidationTime is the timestamp of the last validation
+                  attempt
+                format: date-time
+                type: string
+              validationStatus:
+                description: ValidationStatus represents the current validation status
+                  of the pipeline
+                type: string
             type: object
         type: object
     served: true

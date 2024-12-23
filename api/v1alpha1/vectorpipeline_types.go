@@ -50,6 +50,22 @@ type VectorPipelineSpec struct {
 type VectorPipelineStatus struct {
 	// Conditions represent the latest available observations of VectorPipeline's state
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// ValidationStatus represents the current validation status of the pipeline
+	// +optional
+	ValidationStatus string `json:"validationStatus,omitempty"`
+
+	// LastValidationTime is the timestamp of the last validation attempt
+	// +optional
+	LastValidationTime *metav1.Time `json:"lastValidationTime,omitempty"`
+
+	// LastValidationError contains the error message from the last failed validation
+	// +optional
+	LastValidationError string `json:"lastValidationError,omitempty"`
+
+	// LastValidatedGeneration is the last generation that was successfully validated
+	// +optional
+	LastValidatedGeneration int64 `json:"lastValidatedGeneration,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -57,6 +73,7 @@ type VectorPipelineStatus struct {
 //+kubebuilder:resource:scope=Namespaced
 //+kubebuilder:printcolumn:name="VectorRef",type="string",JSONPath=".spec.vectorRef"
 //+kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.type==\"VectorRefValid\")].status"
+//+kubebuilder:printcolumn:name="Validation",type="string",JSONPath=".status.validationStatus"
 //+kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.conditions[?(@.type==\"VectorRefValid\")].message"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 

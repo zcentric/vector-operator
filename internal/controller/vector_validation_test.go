@@ -232,4 +232,4 @@ func TestVectorValidation(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, configMap.Data, updatedConfigMap.Data)
 	})
-} 
+}

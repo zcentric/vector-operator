@@ -212,6 +212,8 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				ObservedGeneration: vectorPipeline.Generation,
 				LastTransitionTime: metav1.NewTime(time.Now()),
 			})
+			vectorPipeline.Status.ValidationStatus = "InProgress"
+			vectorPipeline.Status.LastValidationTime = &metav1.Time{Time: time.Now()}
 			if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
 				logger.Error(err, "Unable to update VectorPipeline status")
 				return ctrl.Result{}, err
@@ -229,6 +231,8 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					ObservedGeneration: vectorPipeline.Generation,
 					LastTransitionTime: metav1.NewTime(time.Now()),
 				})
+				vectorPipeline.Status.ValidationStatus = "Failed"
+				vectorPipeline.Status.LastValidationError = fmt.Sprintf("Failed to generate configuration: %v", err)
 				if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
 					logger.Error(err, "Unable to update VectorPipeline status")
 				}
@@ -328,6 +332,9 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				ObservedGeneration: vectorPipeline.Generation,
 				LastTransitionTime: metav1.NewTime(time.Now()),
 			})
+			vectorPipeline.Status.ValidationStatus = "Validated"
+			vectorPipeline.Status.LastValidatedGeneration = vectorPipeline.Generation
+			vectorPipeline.Status.LastValidationError = ""
 
 			// Update status and return
 			if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
