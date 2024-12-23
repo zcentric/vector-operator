@@ -210,6 +210,12 @@ func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, nam
 									LocalObjectReference: corev1.LocalObjectReference{
 										Name: validationConfigMapName,
 									},
+									Items: []corev1.KeyToPath{
+										{
+											Key:  "vector.yaml",
+											Path: "config.yaml",
+										},
+									},
 								},
 							},
 						},
