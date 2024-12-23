@@ -21,11 +21,11 @@ spec:
       inputs:
         - logs
       source: |
-        .log.message = "fail22"
+        .log.message = "success"
   sinks:
     stdout:
       type: "console"
       inputs:
-        - logs2
+        - post_parser
       encoding:
         codec: "json"

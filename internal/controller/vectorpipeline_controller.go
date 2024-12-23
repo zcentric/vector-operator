@@ -21,62 +21,28 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/prometheus/client_golang/prometheus"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
+	"github.com/zcentric/vector-operator/internal/metrics"
 )
-
-var (
-	vectorCount = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "vector_operator_vector_count",
-			Help: "Number of Vector CRs",
-		},
-	)
-
-	pipelineSuccessCount = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "vector_operator_pipeline_success_count",
-			Help: "Number of successful pipelines per Vector CR",
-		},
-		[]string{"vector_ref"},
-	)
-
-	pipelineFailureCount = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "vector_operator_pipeline_failure_count",
-			Help: "Number of failed pipelines per Vector CR",
-		},
-		[]string{"vector_ref"},
-	)
-)
-
-func init() {
-	// Register metrics with the global prometheus registry
-	metrics.Registry.MustRegister(vectorCount)
-	metrics.Registry.MustRegister(pipelineSuccessCount)
-	metrics.Registry.MustRegister(pipelineFailureCount)
-}
 
 // VectorPipelineReconciler reconciles a VectorPipeline object
 type VectorPipelineReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
-	KubeClient kubernetes.Interface
+	KubeClient *kubernetes.Clientset
 }
 
 const (
@@ -96,161 +62,15 @@ const (
 //+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=vector.zcentric.com,resources=vectors/status,verbs=get;update;patch
 
-// updateVectorMetrics updates the Vector CR count metric
-func (r *VectorPipelineReconciler) updateVectorMetrics(ctx context.Context) {
-	var vectorList vectorv1alpha1.VectorList
-	if err := r.List(ctx, &vectorList); err != nil {
-		return
-	}
-	vectorCount.Set(float64(len(vectorList.Items)))
-}
-
-// updatePipelineMetrics updates the pipeline success and failure metrics for a given Vector CR
-func (r *VectorPipelineReconciler) updatePipelineMetrics(ctx context.Context, vectorRef string) {
-	var pipelineList vectorv1alpha1.VectorPipelineList
-	if err := r.List(ctx, &pipelineList); err != nil {
-		return
-	}
-
-	successCount := 0
-	failureCount := 0
-
-	for _, pipeline := range pipelineList.Items {
-		if pipeline.Spec.VectorRef != vectorRef {
-			continue
-		}
-
-		// Check if the pipeline has the VectorRefValid condition
-		condition := meta.FindStatusCondition(pipeline.Status.Conditions, VectorRefCondition)
-		if condition != nil && condition.Status == metav1.ConditionTrue {
-			successCount++
-		} else {
-			failureCount++
-		}
-	}
-
-	pipelineSuccessCount.WithLabelValues(vectorRef).Set(float64(successCount))
-	pipelineFailureCount.WithLabelValues(vectorRef).Set(float64(failureCount))
-}
-
-// triggerVectorReconciliation triggers a reconciliation of the referenced Vector
-func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Context, vectorRef string, namespace string) error {
-	logger := log.FromContext(ctx)
-
-	// Get the Vector instance
-	vector := &vectorv1alpha1.Vector{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      vectorRef,
-		Namespace: namespace,
-	}, vector)
-	if err != nil {
-		return err
-	}
-
-	// Update the Vector's annotation to trigger reconciliation
-	if vector.Annotations == nil {
-		vector.Annotations = make(map[string]string)
-	}
-	vector.Annotations["vectorpipeline.zcentric.com/last-update"] = time.Now().Format(time.RFC3339)
-
-	if err := r.Update(ctx, vector); err != nil {
-		logger.Error(err, "Failed to update Vector annotations")
-		return err
-	}
-
-	return nil
-}
-
-// updateVectorConfigMap updates the Vector's ConfigMap with the validated configuration
-func (r *VectorPipelineReconciler) updateVectorConfigMap(ctx context.Context, vector *vectorv1alpha1.Vector, configYaml string) error {
-	logger := log.FromContext(ctx)
-
-	// Get the Vector's ConfigMap
-	configMap := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      fmt.Sprintf("%s-config", vector.Name),
-		Namespace: vector.Namespace,
-	}, configMap)
-	if err != nil {
-		return fmt.Errorf("failed to get Vector ConfigMap: %w", err)
-	}
-
-	// Update the configuration
-	configMap.Data["vector.yaml"] = configYaml
-
-	// Update the ConfigMap
-	if err := r.Update(ctx, configMap); err != nil {
-		return fmt.Errorf("failed to update Vector ConfigMap: %w", err)
-	}
-
-	logger.Info("Successfully updated Vector ConfigMap with validated configuration",
-		"vector", vector.Name)
-
-	return nil
-}
-
-// updateVectorPipelineStatus updates the VectorPipeline status with retries
-func (r *VectorPipelineReconciler) updateVectorPipelineStatus(ctx context.Context, vectorPipeline *vectorv1alpha1.VectorPipeline) error {
-	logger := log.FromContext(ctx)
-	retries := 3
-
-	for i := 0; i < retries; i++ {
-		err := r.Status().Update(ctx, vectorPipeline)
-		if err == nil {
-			return nil
-		}
-		if !errors.IsConflict(err) {
-			return err
-		}
-		// Fetch the latest version and retry
-		var latest vectorv1alpha1.VectorPipeline
-		if err := r.Get(ctx, types.NamespacedName{Name: vectorPipeline.Name, Namespace: vectorPipeline.Namespace}, &latest); err != nil {
-			return err
-		}
-		// Copy status over and retry
-		latest.Status = vectorPipeline.Status
-		vectorPipeline = &latest
-		logger.Info("Retrying status update due to conflict")
-	}
-	return fmt.Errorf("failed to update VectorPipeline status after %d attempts", retries)
-}
-
-// getValidationConfigMapName returns the name of the validation ConfigMap for a pipeline
-func getValidationConfigMapName(pipelineName string) string {
-	return fmt.Sprintf("vector-validate-config-%s", pipelineName)
-}
-
-// copyConfigMapToVector copies the validated configuration to the Vector's ConfigMap
-func (r *VectorPipelineReconciler) copyConfigMapToVector(ctx context.Context, vector *vectorv1alpha1.Vector, validationConfigMap *corev1.ConfigMap) error {
-	logger := log.FromContext(ctx)
-
-	// Get the Vector's ConfigMap
-	vectorConfigMap := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      fmt.Sprintf("%s-config", vector.Name),
-		Namespace: vector.Namespace,
-	}, vectorConfigMap)
-	if err != nil {
-		return fmt.Errorf("failed to get Vector ConfigMap: %w", err)
-	}
-
-	// Copy the validated configuration
-	vectorConfigMap.Data = validationConfigMap.Data
-
-	// Update the ConfigMap
-	if err := r.Update(ctx, vectorConfigMap); err != nil {
-		return fmt.Errorf("failed to update Vector ConfigMap: %w", err)
-	}
-
-	logger.Info("Successfully copied validated configuration to Vector ConfigMap",
-		"vector", vector.Name)
-
-	return nil
-}
-
 // Reconcile handles the reconciliation loop for VectorPipeline resources
 func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+
+	startTime := time.Now()
+	defer func() {
+		metrics.ReconciliationDuration.WithLabelValues("pipeline", req.Namespace).Observe(time.Since(startTime).Seconds())
+		metrics.ReconciliationCount.WithLabelValues("pipeline", "total", req.Namespace).Inc()
+	}()
 
 	// Fetch the VectorPipeline instance first
 	vectorPipeline := &vectorv1alpha1.VectorPipeline{}
@@ -531,6 +351,40 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Update pipeline metrics after status update
 	r.updatePipelineMetrics(ctx, vectorPipeline.Spec.VectorRef)
 
+	// Update pipeline metrics
+	var pipelineList vectorv1alpha1.VectorPipelineList
+	if err := r.List(ctx, &pipelineList, client.InNamespace(req.Namespace)); err == nil {
+		validatedCount := 0
+		failedCount := 0
+		pendingCount := 0
+		pipelinesByVector := make(map[string]int)
+
+		for _, p := range pipelineList.Items {
+			pipelinesByVector[p.Spec.VectorRef]++
+
+			if condition := meta.FindStatusCondition(p.Status.Conditions, ConfigValidCondition); condition != nil {
+				switch condition.Status {
+				case metav1.ConditionTrue:
+					validatedCount++
+				case metav1.ConditionFalse:
+					failedCount++
+				default:
+					pendingCount++
+				}
+			} else {
+				pendingCount++
+			}
+		}
+
+		metrics.PipelineCount.WithLabelValues("validated", req.Namespace).Set(float64(validatedCount))
+		metrics.PipelineCount.WithLabelValues("failed", req.Namespace).Set(float64(failedCount))
+		metrics.PipelineCount.WithLabelValues("pending", req.Namespace).Set(float64(pendingCount))
+
+		for vectorName, count := range pipelinesByVector {
+			metrics.PipelinesByVector.WithLabelValues(vectorName, req.Namespace).Set(float64(count))
+		}
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -579,4 +433,160 @@ func getObservedGeneration(condition *metav1.Condition) int64 {
 		return 0
 	}
 	return condition.ObservedGeneration
+}
+
+// updateVectorMetrics updates the Vector CR count metric
+func (r *VectorPipelineReconciler) updateVectorMetrics(ctx context.Context) {
+	var vectorList vectorv1alpha1.VectorList
+	if err := r.List(ctx, &vectorList); err != nil {
+		return
+	}
+	metrics.VectorInstanceCount.WithLabelValues("agent").Set(float64(len(vectorList.Items)))
+}
+
+// updatePipelineMetrics updates the pipeline success and failure metrics for a given Vector CR
+func (r *VectorPipelineReconciler) updatePipelineMetrics(ctx context.Context, vectorRef string) {
+	var pipelineList vectorv1alpha1.VectorPipelineList
+	if err := r.List(ctx, &pipelineList); err != nil {
+		return
+	}
+
+	successCount := 0
+	failureCount := 0
+	var namespace string
+
+	for _, pipeline := range pipelineList.Items {
+		if pipeline.Spec.VectorRef != vectorRef {
+			continue
+		}
+		namespace = pipeline.Namespace
+
+		// Check if the pipeline has the VectorRefValid condition
+		condition := meta.FindStatusCondition(pipeline.Status.Conditions, VectorRefCondition)
+		if condition != nil && condition.Status == metav1.ConditionTrue {
+			successCount++
+		} else {
+			failureCount++
+		}
+	}
+
+	if namespace != "" {
+		metrics.PipelineCount.WithLabelValues("success", namespace).Set(float64(successCount))
+		metrics.PipelineCount.WithLabelValues("failure", namespace).Set(float64(failureCount))
+	}
+}
+
+// triggerVectorReconciliation triggers a reconciliation of the referenced Vector
+func (r *VectorPipelineReconciler) triggerVectorReconciliation(ctx context.Context, vectorRef string, namespace string) error {
+	logger := log.FromContext(ctx)
+
+	// Get the Vector instance
+	vector := &vectorv1alpha1.Vector{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      vectorRef,
+		Namespace: namespace,
+	}, vector)
+	if err != nil {
+		return err
+	}
+
+	// Update the Vector's annotation to trigger reconciliation
+	if vector.Annotations == nil {
+		vector.Annotations = make(map[string]string)
+	}
+	vector.Annotations["vectorpipeline.zcentric.com/last-update"] = time.Now().Format(time.RFC3339)
+
+	if err := r.Update(ctx, vector); err != nil {
+		logger.Error(err, "Failed to update Vector annotations")
+		return err
+	}
+
+	return nil
+}
+
+// updateVectorConfigMap updates the Vector's ConfigMap with the validated configuration
+func (r *VectorPipelineReconciler) updateVectorConfigMap(ctx context.Context, vector *vectorv1alpha1.Vector, configYaml string) error {
+	logger := log.FromContext(ctx)
+
+	// Get the Vector's ConfigMap
+	configMap := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      fmt.Sprintf("%s-config", vector.Name),
+		Namespace: vector.Namespace,
+	}, configMap)
+	if err != nil {
+		return fmt.Errorf("failed to get Vector ConfigMap: %w", err)
+	}
+
+	// Update the configuration
+	configMap.Data["vector.yaml"] = configYaml
+
+	// Update the ConfigMap
+	if err := r.Update(ctx, configMap); err != nil {
+		return fmt.Errorf("failed to update Vector ConfigMap: %w", err)
+	}
+
+	logger.Info("Successfully updated Vector ConfigMap with validated configuration",
+		"vector", vector.Name)
+
+	return nil
+}
+
+// updateVectorPipelineStatus updates the VectorPipeline status with retries
+func (r *VectorPipelineReconciler) updateVectorPipelineStatus(ctx context.Context, vectorPipeline *vectorv1alpha1.VectorPipeline) error {
+	logger := log.FromContext(ctx)
+	retries := 3
+
+	for i := 0; i < retries; i++ {
+		err := r.Status().Update(ctx, vectorPipeline)
+		if err == nil {
+			return nil
+		}
+		if !errors.IsConflict(err) {
+			return err
+		}
+		// Fetch the latest version and retry
+		var latest vectorv1alpha1.VectorPipeline
+		if err := r.Get(ctx, types.NamespacedName{Name: vectorPipeline.Name, Namespace: vectorPipeline.Namespace}, &latest); err != nil {
+			return err
+		}
+		// Copy status over and retry
+		latest.Status = vectorPipeline.Status
+		vectorPipeline = &latest
+		logger.Info("Retrying status update due to conflict")
+	}
+	return fmt.Errorf("failed to update VectorPipeline status after %d attempts", retries)
+}
+
+// getValidationConfigMapName returns the name of the validation ConfigMap for a pipeline
+func getValidationConfigMapName(pipelineName string) string {
+	return fmt.Sprintf("vector-validate-config-%s", pipelineName)
+}
+
+// copyConfigMapToVector copies the validated configuration to the Vector's ConfigMap
+func (r *VectorPipelineReconciler) copyConfigMapToVector(ctx context.Context, vector *vectorv1alpha1.Vector, validationConfigMap *corev1.ConfigMap) error {
+	logger := log.FromContext(ctx)
+
+	// Get the Vector's ConfigMap
+	vectorConfigMap := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      fmt.Sprintf("%s-config", vector.Name),
+		Namespace: vector.Namespace,
+	}, vectorConfigMap)
+	if err != nil {
+		return fmt.Errorf("failed to get Vector ConfigMap: %w", err)
+	}
+
+	// Copy the validated configuration
+	vectorConfigMap.Data = validationConfigMap.Data
+
+	// Update the ConfigMap
+	if err := r.Update(ctx, vectorConfigMap); err != nil {
+		return fmt.Errorf("failed to update Vector ConfigMap: %w", err)
+	}
+
+	logger.Info("Successfully copied validated configuration to Vector ConfigMap",
+		"vector", vector.Name)
+
+	return nil
 }
