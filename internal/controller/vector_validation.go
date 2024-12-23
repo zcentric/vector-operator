@@ -118,51 +118,48 @@ func (r *VectorPipelineReconciler) generateConfigForValidation(ctx context.Conte
 	return string(configYAML), nil
 }
 
-func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, namespace string, configYaml string, pipelineName string) error {
-	// Create temporary ConfigMap with unique name
-	validationCM := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("vector-validate-config-%s", pipelineName),
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "vector-pipeline-controller",
-				"vectorpipeline":               pipelineName,
-			},
-		},
-		Data: map[string]string{
-			"config.yaml": configYaml,
-		},
-	}
+func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, namespace, validationConfigMapName, pipelineName string, vectorPipeline *vectorv1alpha1.VectorPipeline) error {
+	logger := log.FromContext(ctx)
 
-	// First try to delete any existing validation ConfigMap
-	if err := r.Delete(ctx, validationCM); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to cleanup old validation ConfigMap: %w", err)
+	// Create a unique job name for this validation
+	jobName := fmt.Sprintf("vector-validate-%s", pipelineName)
+
+	// Check if a validation job already exists
+	existingJob := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      jobName,
+		Namespace: namespace,
+	}, existingJob)
+
+	if err == nil {
+		// Job exists, delete it
+		logger.Info("Deleting existing validation job", "job", jobName)
+		propagationPolicy := metav1.DeletePropagationForeground
+		if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		}); err != nil {
+			return fmt.Errorf("failed to delete existing validation job: %w", err)
 		}
-	}
 
-	// Create new validation ConfigMap
-	if err := r.Create(ctx, validationCM); err != nil {
-		return fmt.Errorf("failed to create validation ConfigMap: %w", err)
-	}
-	defer func() {
-		// Always try to cleanup the ConfigMap
-		if err := r.Delete(context.Background(), validationCM); err != nil {
-			if !errors.IsNotFound(err) {
-				log.FromContext(ctx).Error(err, "Failed to delete validation ConfigMap")
+		// Wait for the job to be deleted
+		for i := 0; i < 30; i++ { // Wait up to 30 seconds
+			err := r.Get(ctx, types.NamespacedName{
+				Name:      jobName,
+				Namespace: namespace,
+			}, existingJob)
+			if errors.IsNotFound(err) {
+				break
 			}
+			time.Sleep(time.Second)
 		}
-	}()
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check for existing validation job: %w", err)
+	}
 
-	// Create validation job
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("vector-validate-%s", pipelineName),
+			Name:      jobName,
 			Namespace: namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "vector-pipeline-controller",
-				"vectorpipeline":               pipelineName,
-			},
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: pointer.Int32(0),
@@ -211,7 +208,7 @@ func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, nam
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: validationCM.Name,
+										Name: validationConfigMapName,
 									},
 								},
 							},
@@ -222,24 +219,19 @@ func (r *VectorPipelineReconciler) validateVectorConfig(ctx context.Context, nam
 		},
 	}
 
-	// First try to delete any existing validation job
-	if err := r.Delete(ctx, job); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to cleanup old validation job: %w", err)
-		}
-	}
-
 	if err := r.Create(ctx, job); err != nil {
 		return fmt.Errorf("failed to create validation job: %w", err)
 	}
 
 	// Wait for validation to complete
-	err := r.waitForValidationJob(ctx, job)
+	err = r.waitForValidationJob(ctx, job, namespace, pipelineName, vectorPipeline)
 
 	return err
 }
 
-func (r *VectorPipelineReconciler) waitForValidationJob(ctx context.Context, job *batchv1.Job) error {
+func (r *VectorPipelineReconciler) waitForValidationJob(ctx context.Context, job *batchv1.Job, namespace string, pipelineName string, vectorPipeline *vectorv1alpha1.VectorPipeline) error {
+	logger := log.FromContext(ctx)
+
 	timeout := time.After(2 * time.Minute)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -247,14 +239,66 @@ func (r *VectorPipelineReconciler) waitForValidationJob(ctx context.Context, job
 	for {
 		select {
 		case <-timeout:
+			// Clean up the job on timeout
+			if err := r.Delete(ctx, job); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete timed out validation job")
+			}
 			return fmt.Errorf("timeout waiting for validation job completion")
 		case <-ticker.C:
 			var completedJob batchv1.Job
 			if err := r.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: job.Namespace}, &completedJob); err != nil {
+				if errors.IsNotFound(err) {
+					return fmt.Errorf("validation job was deleted before completion")
+				}
 				return fmt.Errorf("failed to get job status: %w", err)
 			}
 
 			if completedJob.Status.Succeeded > 0 {
+				// Get the Vector instance
+				vector := &vectorv1alpha1.Vector{}
+				if err := r.Get(ctx, types.NamespacedName{
+					Name:      vectorPipeline.Spec.VectorRef,
+					Namespace: vectorPipeline.Namespace,
+				}, vector); err != nil {
+					return fmt.Errorf("failed to get Vector instance: %w", err)
+				}
+
+				// Check if all pipelines are validated and none have failed
+				allPipelinesValidated := true
+				hasFailedPipelines := false
+				for _, status := range vector.Status.PipelineValidationStatus {
+					if status.Status == "Failed" {
+						hasFailedPipelines = true
+						allPipelinesValidated = false
+						break
+					} else if status.Status != "Validated" {
+						allPipelinesValidated = false
+						break
+					}
+				}
+
+				logger.Info("Checking pipeline validation status", "allPipelinesValidated", allPipelinesValidated, "hasFailedPipelines", hasFailedPipelines)
+
+				if allPipelinesValidated && !hasFailedPipelines {
+					// Get the validation ConfigMap
+					validationCM := &corev1.ConfigMap{}
+					if err := r.Get(ctx, types.NamespacedName{
+						Name:      getValidationConfigMapName(pipelineName),
+						Namespace: namespace,
+					}, validationCM); err != nil {
+						return fmt.Errorf("failed to get validation ConfigMap: %w", err)
+					}
+
+					// Use the copyConfigMapToVector function to update the main ConfigMap
+					if err := r.copyConfigMapToVector(ctx, vector, validationCM); err != nil {
+						return fmt.Errorf("failed to copy validated configuration: %w", err)
+					}
+				}
+
+				// Clean up the successful job immediately
+				if err := r.Delete(ctx, &completedJob); err != nil && !errors.IsNotFound(err) {
+					logger.Error(err, "Failed to delete successful validation job")
+				}
 				return nil // Validation successful
 			}
 

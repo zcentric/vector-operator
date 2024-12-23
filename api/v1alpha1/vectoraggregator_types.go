@@ -88,6 +88,18 @@ type VectorAggregatorStatus struct {
 	// ConfigHash represents the current hash of the Vector configuration
 	// +optional
 	ConfigHash string `json:"configHash,omitempty"`
+
+	// ValidatedPipelines tracks which pipelines have been validated and their generation
+	// +optional
+	ValidatedPipelines map[string]int64 `json:"validatedPipelines,omitempty"`
+
+	// PipelineValidationStatus shows the validation status of each pipeline
+	// +optional
+	PipelineValidationStatus map[string]PipelineValidation `json:"pipelineValidationStatus,omitempty"`
+
+	// ValidationSummary provides a summary of pipeline validations
+	// +optional
+	ValidationSummary string `json:"validationSummary,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -95,6 +107,7 @@ type VectorAggregatorStatus struct {
 //+kubebuilder:resource:scope=Namespaced
 //+kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image"
 //+kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".spec.replicas"
+//+kubebuilder:printcolumn:name="Validation Status",type="string",JSONPath=".status.validationSummary"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // VectorAggregator is the Schema for the vectoraggregators API

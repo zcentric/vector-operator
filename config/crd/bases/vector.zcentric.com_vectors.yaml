@@ -18,8 +18,8 @@ spec:
     - jsonPath: .spec.image
       name: Image
       type: string
-    - jsonPath: .status.validatedPipelines
-      name: Validated Pipelines
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Status
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -2123,13 +2123,42 @@ spec:
                 description: ConfigHash represents the current hash of the Vector
                   configuration
                 type: string
+              pipelineValidationStatus:
+                additionalProperties:
+                  description: PipelineValidation represents the validation status
+                    of a pipeline
+                  properties:
+                    generation:
+                      description: Generation is the generation of the pipeline that
+                        was validated
+                      format: int64
+                      type: integer
+                    lastValidated:
+                      description: LastValidated is the timestamp of the last validation
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message provides additional details about the validation
+                      type: string
+                    status:
+                      description: Status indicates if the pipeline is validated
+                      enum:
+                      - Validated
+                      - Failed
+                      type: string
+                  required:
+                  - generation
+                  - status
+                  type: object
+                description: PipelineValidationStatus shows the validation status
+                  of each pipeline
+                type: object
               validatedPipelines:
                 additionalProperties:
                   format: int64
                   type: integer
-                description: |-
-                  ValidatedPipelines tracks which pipelines have been validated
-                  The key is the pipeline name and the value is the generation that was validated
+                description: ValidatedPipelines tracks which pipelines have been validated
+                  and their generation
                 type: object
             type: object
         type: object
