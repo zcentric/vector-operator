@@ -41,14 +41,13 @@ import (
 	"sigs.k8s.io/yaml"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
+	"github.com/zcentric/vector-operator/internal/metrics"
 	"github.com/zcentric/vector-operator/internal/utils"
 )
 
 const (
 	vectorFinalizer      = "vector.zcentric.com/finalizer"
 	configHashAnnotation = "vector.zcentric.com/config-hash"
-	// VectorReadyCondition represents the Ready condition for the Vector
-	VectorReadyCondition = "Ready"
 )
 
 // VectorReconciler reconciles a Vector object
@@ -80,6 +79,12 @@ func calculateConfigHash(configMap *corev1.ConfigMap) string {
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 
 func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	startTime := time.Now()
+	defer func() {
+		metrics.ReconciliationDuration.WithLabelValues("vector", req.Namespace).Observe(time.Since(startTime).Seconds())
+		metrics.ReconciliationCount.WithLabelValues("vector", "total", req.Namespace).Inc()
+	}()
+
 	logger := log.FromContext(ctx)
 
 	// Fetch the Vector instance
@@ -172,6 +177,25 @@ func (r *VectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if err := r.updateReadyCondition(ctx, vector); err != nil {
 		logger.Error(err, "Failed to update Ready condition")
 		return ctrl.Result{}, err
+	}
+
+	// Update pod metrics
+	ds := &appsv1.DaemonSet{}
+	err = r.Get(ctx, types.NamespacedName{Name: vector.Name, Namespace: vector.Namespace}, ds)
+	if err == nil {
+		metrics.VectorPodsDesired.WithLabelValues("agent", req.Namespace).Set(float64(ds.Status.DesiredNumberScheduled))
+		metrics.VectorPodsAvailable.WithLabelValues("agent", req.Namespace).Set(float64(ds.Status.NumberAvailable))
+		metrics.VectorPodsUnavailable.WithLabelValues("agent", req.Namespace).Set(float64(ds.Status.DesiredNumberScheduled - ds.Status.NumberAvailable))
+	}
+
+	// Update health metrics
+	if vector.Status.Conditions != nil {
+		readyCondition := meta.FindStatusCondition(vector.Status.Conditions, VectorReadyCondition)
+		if readyCondition != nil && readyCondition.Status == metav1.ConditionTrue {
+			metrics.ResourceHealth.WithLabelValues("vector", vector.Name, req.Namespace).Set(1)
+		} else {
+			metrics.ResourceHealth.WithLabelValues("vector", vector.Name, req.Namespace).Set(0)
+		}
 	}
 
 	return ctrl.Result{}, nil

@@ -19,9 +19,11 @@ package controller
 import (
 	"context"
 	"reflect"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -29,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	vectorv1alpha1 "github.com/zcentric/vector-operator/api/v1alpha1"
+	"github.com/zcentric/vector-operator/internal/metrics"
 	"github.com/zcentric/vector-operator/internal/utils"
 )
 
@@ -47,6 +50,12 @@ type VectorAggregatorReconciler struct {
 // Reconcile handles the reconciliation loop for VectorAggregator resources
 func (r *VectorAggregatorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
+
+	startTime := time.Now()
+	defer func() {
+		metrics.ReconciliationDuration.WithLabelValues("aggregator", req.Namespace).Observe(time.Since(startTime).Seconds())
+		metrics.ReconciliationCount.WithLabelValues("aggregator", "total", req.Namespace).Inc()
+	}()
 
 	// Fetch the VectorAggregator instance
 	var vectorAggregator vectorv1alpha1.VectorAggregator
@@ -83,6 +92,23 @@ func (r *VectorAggregatorReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			return ctrl.Result{}, err
 		}
 		log.Info("Updated deployment", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
+	}
+
+	// Update pod metrics
+	if deployment != nil {
+		metrics.VectorPodsDesired.WithLabelValues("aggregator", req.Namespace).Set(float64(*deployment.Spec.Replicas))
+		metrics.VectorPodsAvailable.WithLabelValues("aggregator", req.Namespace).Set(float64(deployment.Status.AvailableReplicas))
+		metrics.VectorPodsUnavailable.WithLabelValues("aggregator", req.Namespace).Set(float64(*deployment.Spec.Replicas - deployment.Status.AvailableReplicas))
+	}
+
+	// Update health metrics
+	if vectorAggregator.Status.Conditions != nil {
+		readyCondition := meta.FindStatusCondition(vectorAggregator.Status.Conditions, VectorReadyCondition)
+		if readyCondition != nil && readyCondition.Status == metav1.ConditionTrue {
+			metrics.ResourceHealth.WithLabelValues("aggregator", vectorAggregator.Name, req.Namespace).Set(1)
+		} else {
+			metrics.ResourceHealth.WithLabelValues("aggregator", vectorAggregator.Name, req.Namespace).Set(0)
+		}
 	}
 
 	return ctrl.Result{}, nil
