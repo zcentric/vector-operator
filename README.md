@@ -233,3 +233,81 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+## Features
+
+- Automated deployment and management of Vector instances
+- Pipeline configuration validation before deployment
+- Separate pipeline resources for modular configuration
+- Automatic configuration updates with validation
+
+## Installation
+
+1. Install the operator and CRDs:
+
+```sh
+kubectl apply -f https://raw.githubusercontent.com/zcentric/vector-operator/main/dist/install.yaml
+```
+
+2. Create Vector instances:
+
+For an agent (runs on every node):
+
+```yaml
+apiVersion: vector.zcentric.com/v1alpha1
+kind: Vector
+metadata:
+  name: vector-agent
+  namespace: vector
+spec:
+  image: "timberio/vector:0.38.0-distroless-libc"
+```
+
+For an aggregator (centralized processing):
+
+```yaml
+apiVersion: vector.zcentric.com/v1alpha1
+kind: VectorAggregator
+metadata:
+  name: vector-aggregator
+  namespace: vector
+spec:
+  image: "timberio/vector:0.38.0-distroless-libc"
+  replicas: 2 # optional, defaults to 1
+```
+
+3. Define a pipeline:
+
+```yaml
+apiVersion: vector.zcentric.com/v1alpha1
+kind: VectorPipeline
+metadata:
+  name: kubernetes-logs
+spec:
+  vectorRef: vector-agent
+  sources:
+    k8s-logs:
+      type: "kubernetes_logs"
+  transforms:
+    remap:
+      type: "remap"
+      inputs: ["k8s-logs"]
+      source: |
+        .timestamp = del(.timestamp)
+        .environment = "production"
+  sinks:
+    console:
+      type: "console"
+      inputs: ["remap"]
+      encoding:
+        codec: "json"
+```
+
+## Pipeline Validation
+
+The operator includes a robust validation system to ensure Vector configurations are valid before deployment.
+See [Pipeline Validation](docs/pipeline-validation.md) for details on:
+- How validation works
+- Checking validation status
+- Handling validation failures
+- Best practices
