@@ -318,4 +318,3 @@ func TestVectorSetupWithManager(t *testing.T) {
 	err = r.SetupWithManager(mgr)
 	assert.NoError(t, err)
 }
- 

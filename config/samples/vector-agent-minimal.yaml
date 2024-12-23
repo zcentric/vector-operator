@@ -19,7 +19,7 @@ spec:
     post_parser:
       type: remap
       inputs:
-        - logs
+        - logs2
       source: |
         .log.message = "success"
   sinks:

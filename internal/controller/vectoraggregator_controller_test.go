@@ -83,7 +83,7 @@ func TestVectorAggregatorController(t *testing.T) {
 
 	t.Run("Test NeedsUpdate", func(t *testing.T) {
 		deployment := r.deploymentForVectorAggregator(vectorAggregator)
-		
+
 		// Should not need update when nothing changed
 		assert.False(t, needsUpdate(deployment, vectorAggregator))
 
@@ -103,15 +103,15 @@ func TestVectorAggregatorController(t *testing.T) {
 
 	t.Run("Test Deployment Configuration", func(t *testing.T) {
 		deployment := r.deploymentForVectorAggregator(vectorAggregator)
-		
+
 		// Test basic deployment configuration
 		assert.Equal(t, vectorAggregator.Spec.Image, deployment.Spec.Template.Spec.Containers[0].Image)
 		assert.Equal(t, "vector", deployment.Spec.Template.Spec.Containers[0].Name)
-		
+
 		// Test volume configuration
 		assert.Equal(t, 1, len(deployment.Spec.Template.Spec.Volumes))
 		assert.Equal(t, "data", deployment.Spec.Template.Spec.Volumes[0].Name)
-		
+
 		// Test volume mounts
 		container := deployment.Spec.Template.Spec.Containers[0]
 		assert.Equal(t, 1, len(container.VolumeMounts))
@@ -149,4 +149,4 @@ func TestAggregatorSetupWithManager(t *testing.T) {
 	// Test SetupWithManager
 	err = r.SetupWithManager(mgr)
 	assert.NoError(t, err)
-} 
+}
