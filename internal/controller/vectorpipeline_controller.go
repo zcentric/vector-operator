@@ -120,8 +120,8 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}, vector)
 
 	// Update the status condition based on Vector existence
-	var condition metav1.Condition
-	condition = metav1.Condition{
+	var vectorRefCondition metav1.Condition
+	vectorRefCondition = metav1.Condition{
 		Type:               VectorRefCondition,
 		Status:             metav1.ConditionUnknown,
 		ObservedGeneration: vectorPipeline.Generation,
@@ -133,28 +133,28 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			logger.Info("Referenced Vector not found",
 				"vectorRef", vectorPipeline.Spec.VectorRef,
 				"pipeline", vectorPipeline.Name)
-			condition.Status = metav1.ConditionFalse
-			condition.Reason = "VectorNotFound"
-			condition.Message = fmt.Sprintf("Referenced Vector '%s' not found", vectorPipeline.Spec.VectorRef)
+			vectorRefCondition.Status = metav1.ConditionFalse
+			vectorRefCondition.Reason = "VectorNotFound"
+			vectorRefCondition.Message = fmt.Sprintf("Referenced Vector '%s' not found", vectorPipeline.Spec.VectorRef)
 		} else {
-			condition.Status = metav1.ConditionUnknown
-			condition.Reason = "ErrorCheckingVector"
-			condition.Message = "Error occurred while checking Vector reference"
+			vectorRefCondition.Status = metav1.ConditionUnknown
+			vectorRefCondition.Reason = "ErrorCheckingVector"
+			vectorRefCondition.Message = "Error occurred while checking Vector reference"
 			return ctrl.Result{Requeue: true}, err
 		}
 	} else {
 		logger.Info("Referenced Vector found",
 			"vectorRef", vectorPipeline.Spec.VectorRef,
 			"pipeline", vectorPipeline.Name)
-		condition.Status = metav1.ConditionTrue
-		condition.Reason = "VectorFound"
-		condition.Message = "Referenced Vector exists"
+		vectorRefCondition.Status = metav1.ConditionTrue
+		vectorRefCondition.Reason = "VectorFound"
+		vectorRefCondition.Message = "Referenced Vector exists"
 	}
 
 	// Check if condition has changed before updating
 	currentCondition := meta.FindStatusCondition(vectorPipeline.Status.Conditions, VectorRefCondition)
-	if currentCondition == nil || currentCondition.Status != condition.Status {
-		meta.SetStatusCondition(&vectorPipeline.Status.Conditions, condition)
+	if currentCondition == nil || currentCondition.Status != vectorRefCondition.Status {
+		meta.SetStatusCondition(&vectorPipeline.Status.Conditions, vectorRefCondition)
 		if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
 			logger.Error(err, "Unable to update VectorPipeline status")
 			return ctrl.Result{Requeue: true}, err
