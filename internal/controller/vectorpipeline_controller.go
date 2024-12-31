@@ -43,6 +43,8 @@ type VectorPipelineReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
 	KubeClient *kubernetes.Clientset
+	// Add fields for cleanup management
+	cleanupCancel context.CancelFunc
 }
 
 const (
@@ -419,6 +421,11 @@ func (r *VectorPipelineReconciler) enqueueRequestsForVector(ctx context.Context,
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *VectorPipelineReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Add the runnable to the manager
+	if err := mgr.Add(r); err != nil {
+		return fmt.Errorf("failed to add cleanup routine to manager: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&vectorv1alpha1.VectorPipeline{}).
 		Watches(&vectorv1alpha1.Vector{},
@@ -596,4 +603,38 @@ func (r *VectorPipelineReconciler) copyConfigMapToVector(ctx context.Context, ve
 		"vector", vector.Name)
 
 	return nil
+}
+
+// Start implements manager.Runnable
+func (r *VectorPipelineReconciler) Start(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+	logger.Info("Starting validation cleanup routine")
+
+	// Create a new context with cancel for the cleanup routine
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	r.cleanupCancel = cancel
+
+	// Start the cleanup routine
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cleanupCtx.Done():
+				logger.Info("Stopping validation cleanup routine")
+				return
+			case <-ticker.C:
+				r.cleanupOldValidationJobs(cleanupCtx)
+			}
+		}
+	}()
+
+	// Block until the context is cancelled
+	<-ctx.Done()
+	return nil
+}
+
+// NeedLeaderElection implements manager.LeaderElectionRunnable
+func (r *VectorPipelineReconciler) NeedLeaderElection() bool {
+	return true // Only run cleanup on the leader
 }

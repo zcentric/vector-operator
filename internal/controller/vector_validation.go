@@ -352,8 +352,32 @@ func (r *VectorPipelineReconciler) waitForValidationJob(ctx context.Context, job
 	}
 }
 
+// startValidationCleanupRoutine starts a goroutine that periodically cleans up completed validation jobs
+func (r *VectorPipelineReconciler) startValidationCleanupRoutine(ctx context.Context) {
+	logger := log.FromContext(ctx)
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				logger.Info("Stopping validation cleanup routine")
+				return
+			case <-ticker.C:
+				r.cleanupOldValidationJobs(ctx)
+			}
+		}
+	}()
+	logger.Info("Started validation cleanup routine")
+}
+
 func (r *VectorPipelineReconciler) cleanupOldValidationJobs(ctx context.Context) {
 	logger := log.FromContext(ctx)
+
+	// Check if context is cancelled
+	if ctx.Err() != nil {
+		return
+	}
 
 	// List all validation jobs
 	var jobs batchv1.JobList
@@ -363,12 +387,7 @@ func (r *VectorPipelineReconciler) cleanupOldValidationJobs(ctx context.Context)
 	}
 
 	for _, job := range jobs.Items {
-		// Skip failed jobs
-		if job.Status.Failed > 0 {
-			continue
-		}
-
-		// Check if the job is successful and older than 2 minutes
+		// Only clean up successful jobs
 		if job.Status.Succeeded > 0 {
 			startTime := job.Spec.Template.ObjectMeta.Annotations["vector.zcentric.com/validation-start-time"]
 			if startTime == "" {
@@ -381,10 +400,13 @@ func (r *VectorPipelineReconciler) cleanupOldValidationJobs(ctx context.Context)
 				continue
 			}
 
-			if time.Since(jobStartTime) > 2*time.Minute {
+			// Clean up successful jobs after 5 minutes
+			if time.Since(jobStartTime) > 5*time.Minute {
 				// Delete the job
 				if err := r.Delete(ctx, &job); err != nil && !errors.IsNotFound(err) {
 					logger.Error(err, "Failed to delete old validation job", "job", job.Name)
+				} else {
+					logger.Info("Deleted successful validation job", "job", job.Name, "age", time.Since(jobStartTime).Round(time.Second))
 				}
 
 				// Delete associated pods
@@ -395,8 +417,12 @@ func (r *VectorPipelineReconciler) cleanupOldValidationJobs(ctx context.Context)
 				}
 
 				for _, pod := range pods.Items {
-					if err := r.Delete(ctx, &pod); err != nil && !errors.IsNotFound(err) {
-						logger.Error(err, "Failed to delete validation pod", "pod", pod.Name)
+					if pod.Status.Phase == corev1.PodSucceeded {
+						if err := r.Delete(ctx, &pod); err != nil && !errors.IsNotFound(err) {
+							logger.Error(err, "Failed to delete validation pod", "pod", pod.Name)
+						} else {
+							logger.Info("Deleted successful validation pod", "pod", pod.Name)
+						}
 					}
 				}
 			}
