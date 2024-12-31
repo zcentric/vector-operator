@@ -119,30 +119,12 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		Namespace: req.Namespace,
 	}, vector)
 
-	// Check if this is the first reconciliation after operator startup
-	if vector.Annotations == nil || vector.Annotations[startTimeAnnotation] == "" {
-		// This is the first reconciliation after operator startup
-		if vector.Annotations == nil {
-			vector.Annotations = make(map[string]string)
-		}
-		vector.Annotations[startTimeAnnotation] = time.Now().Format(time.RFC3339)
-		if err := r.Update(ctx, vector); err != nil {
-			logger.Error(err, "Failed to update Vector start time annotation")
-			return ctrl.Result{}, err
-		}
-		logger.Info("Skipping initial validation on operator startup",
-			"pipeline", vectorPipeline.Name,
-			"vector", vector.Name)
-		// Skip validation on startup
-		return ctrl.Result{}, nil
-	}
-
 	// Update the status condition based on Vector existence
 	condition := metav1.Condition{
 		Type:               VectorRefCondition,
-		Status:             metav1.ConditionUnknown,
-		ObservedGeneration: vectorPipeline.Generation,
-		LastTransitionTime: metav1.NewTime(time.Now()),
+			Status:             metav1.ConditionUnknown,
+			ObservedGeneration: vectorPipeline.Generation,
+			LastTransitionTime: metav1.NewTime(time.Now()),
 	}
 
 	if err != nil {
@@ -166,183 +148,6 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		condition.Status = metav1.ConditionTrue
 		condition.Reason = "VectorFound"
 		condition.Message = "Referenced Vector exists"
-
-		// Check if we need to validate the configuration
-		validationCondition := meta.FindStatusCondition(vectorPipeline.Status.Conditions, ConfigValidCondition)
-		// Initialize ValidatedPipelines if nil
-		if vector.Status.ValidatedPipelines == nil {
-			vector.Status.ValidatedPipelines = make(map[string]int64)
-		}
-
-		// Check if pipeline needs validation
-		lastValidatedGeneration := vector.Status.ValidatedPipelines[vectorPipeline.Name]
-
-		// Need validation if:
-		// 1. Generation has changed from last validated generation, or
-		// 2. No validation condition exists yet, or
-		// 3. Generation has changed since last validation
-		needsValidation := lastValidatedGeneration != vectorPipeline.Generation ||
-			validationCondition == nil
-
-		// Skip validation if we already have a failed validation for this generation
-		if validationCondition != nil &&
-			validationCondition.Status == metav1.ConditionFalse &&
-			validationCondition.ObservedGeneration == vectorPipeline.Generation {
-			logger.Info("Skipping validation as it already failed for this generation",
-				"pipeline", vectorPipeline.Name,
-				"generation", vectorPipeline.Generation)
-			return ctrl.Result{}, nil
-		}
-
-		logger.Info("Checking validation status",
-			"pipeline", vectorPipeline.Name,
-			"currentGeneration", vectorPipeline.Generation,
-			"lastValidatedGeneration", lastValidatedGeneration,
-			"lastValidationStatus", getValidationStatus(validationCondition),
-			"observedGeneration", getObservedGeneration(validationCondition),
-			"needsValidation", needsValidation)
-
-		if needsValidation {
-			// Update status to indicate validation is in progress
-			meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
-				Type:               ConfigValidCondition,
-				Status:             metav1.ConditionUnknown,
-				Reason:             "ValidationInProgress",
-				Message:            "Vector configuration validation is in progress",
-				ObservedGeneration: vectorPipeline.Generation,
-				LastTransitionTime: metav1.NewTime(time.Now()),
-			})
-			vectorPipeline.Status.ValidationStatus = "InProgress"
-			vectorPipeline.Status.LastValidationTime = &metav1.Time{Time: time.Now()}
-			if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
-				logger.Error(err, "Unable to update VectorPipeline status")
-				return ctrl.Result{}, err
-			}
-
-			// Generate the complete Vector configuration for validation
-			configYaml, err := r.generateConfigForValidation(ctx, vector, vectorPipeline)
-			if err != nil {
-				logger.Error(err, "Failed to generate Vector configuration")
-				meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
-					Type:               ConfigValidCondition,
-					Status:             metav1.ConditionFalse,
-					Reason:             "ConfigGenerationFailed",
-					Message:            fmt.Sprintf("Failed to generate configuration: %v", err),
-					ObservedGeneration: vectorPipeline.Generation,
-					LastTransitionTime: metav1.NewTime(time.Now()),
-				})
-				vectorPipeline.Status.ValidationStatus = "Failed"
-				vectorPipeline.Status.LastValidationError = fmt.Sprintf("Failed to generate configuration: %v", err)
-				if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
-					logger.Error(err, "Unable to update VectorPipeline status")
-				}
-				return ctrl.Result{}, err
-			}
-
-			// Create or update the validation ConfigMap
-			validationCM := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      getValidationConfigMapName(vectorPipeline.Name),
-					Namespace: req.Namespace,
-				},
-				Data: map[string]string{
-					"vector.yaml": configYaml,
-				},
-			}
-
-			// Create or update the validation ConfigMap
-			if err := ctrl.SetControllerReference(vectorPipeline, validationCM, r.Scheme); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			err = r.Create(ctx, validationCM)
-			if errors.IsAlreadyExists(err) {
-				if err := r.Update(ctx, validationCM); err != nil {
-					logger.Error(err, "Failed to update validation ConfigMap")
-					return ctrl.Result{}, err
-				}
-			} else if err != nil {
-				logger.Error(err, "Failed to create validation ConfigMap")
-				return ctrl.Result{}, err
-			}
-
-			// Run validation first
-			if err := r.validateVectorConfig(ctx, req.Namespace, validationCM.Name, vectorPipeline.Name, vectorPipeline); err != nil {
-				logger.Error(err, "Vector configuration validation failed")
-				// Set validation condition
-				meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
-					Type:               ConfigValidCondition,
-					Status:             metav1.ConditionFalse,
-					Reason:             "ValidationFailed",
-					Message:            fmt.Sprintf("Configuration validation failed: %v", err),
-					ObservedGeneration: vectorPipeline.Generation,
-					LastTransitionTime: metav1.NewTime(time.Now()),
-				})
-
-				// Update Vector's pipeline validation status
-				if vector.Status.PipelineValidationStatus == nil {
-					vector.Status.PipelineValidationStatus = make(map[string]vectorv1alpha1.PipelineValidation)
-				}
-				vector.Status.PipelineValidationStatus[vectorPipeline.Name] = vectorv1alpha1.PipelineValidation{
-					Status:        "Failed",
-					Message:       fmt.Sprintf("Validation failed: %v", err),
-					LastValidated: metav1.NewTime(time.Now()),
-					Generation:    vectorPipeline.Generation,
-				}
-				// Remove from validated pipelines if validation fails
-				delete(vector.Status.ValidatedPipelines, vectorPipeline.Name)
-				if err := r.Status().Update(ctx, vector); err != nil {
-					logger.Error(err, "Failed to update Vector validation status")
-					return ctrl.Result{}, err
-				}
-				// Update status and return
-				if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
-					logger.Error(err, "Unable to update VectorPipeline validation status")
-					return ctrl.Result{}, err
-				}
-				// Don't requeue - wait for user to fix the configuration
-				return ctrl.Result{}, nil
-			}
-
-			// After successful validation
-			// Update Vector's pipeline validation status
-			if vector.Status.PipelineValidationStatus == nil {
-				vector.Status.PipelineValidationStatus = make(map[string]vectorv1alpha1.PipelineValidation)
-			}
-			vector.Status.PipelineValidationStatus[vectorPipeline.Name] = vectorv1alpha1.PipelineValidation{
-				Status:        "Validated",
-				Message:       "Configuration validation succeeded",
-				LastValidated: metav1.NewTime(time.Now()),
-				Generation:    vectorPipeline.Generation,
-			}
-			vector.Status.ValidatedPipelines[vectorPipeline.Name] = vectorPipeline.Generation
-
-			// Update Vector status before proceeding
-			if err := r.Status().Update(ctx, vector); err != nil {
-				logger.Error(err, "Failed to update Vector validation status")
-				return ctrl.Result{}, err
-			}
-
-			// Set successful validation condition
-			meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
-				Type:               ConfigValidCondition,
-				Status:             metav1.ConditionTrue,
-				Reason:             "ValidationSucceeded",
-				Message:            "Vector configuration validation succeeded",
-				ObservedGeneration: vectorPipeline.Generation,
-				LastTransitionTime: metav1.NewTime(time.Now()),
-			})
-			vectorPipeline.Status.ValidationStatus = "Validated"
-			vectorPipeline.Status.LastValidatedGeneration = vectorPipeline.Generation
-			vectorPipeline.Status.LastValidationError = ""
-
-			// Update status and return
-			if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
-				logger.Error(err, "Unable to update VectorPipeline validation status")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
-		}
 	}
 
 	// Check if condition has changed before updating
@@ -353,6 +158,201 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			logger.Error(err, "Unable to update VectorPipeline status")
 			return ctrl.Result{Requeue: true}, err
 		}
+	}
+
+	// Check if this is the first reconciliation after operator startup
+	if vector.Annotations == nil || vector.Annotations[startTimeAnnotation] == "" {
+		// This is the first reconciliation after operator startup
+		if vector.Annotations == nil {
+			vector.Annotations = make(map[string]string)
+		}
+		vector.Annotations[startTimeAnnotation] = time.Now().Format(time.RFC3339)
+		if err := r.Update(ctx, vector); err != nil {
+			logger.Error(err, "Failed to update Vector start time annotation")
+			return ctrl.Result{}, err
+		}
+		logger.Info("Skipping initial validation on operator startup",
+			"pipeline", vectorPipeline.Name,
+			"vector", vector.Name)
+		// Skip validation on startup
+		return ctrl.Result{}, nil
+	}
+
+	// Check if we need to validate the configuration
+	validationCondition := meta.FindStatusCondition(vectorPipeline.Status.Conditions, ConfigValidCondition)
+	// Initialize ValidatedPipelines if nil
+	if vector.Status.ValidatedPipelines == nil {
+		vector.Status.ValidatedPipelines = make(map[string]int64)
+	}
+
+	// Check if pipeline needs validation
+	lastValidatedGeneration := vector.Status.ValidatedPipelines[vectorPipeline.Name]
+
+	// Need validation if:
+	// 1. Generation has changed from last validated generation, or
+	// 2. No validation condition exists yet, or
+	// 3. Generation has changed since last validation
+	needsValidation := lastValidatedGeneration != vectorPipeline.Generation ||
+		validationCondition == nil
+
+	// Skip validation if we already have a failed validation for this generation
+	if validationCondition != nil &&
+		validationCondition.Status == metav1.ConditionFalse &&
+		validationCondition.ObservedGeneration == vectorPipeline.Generation {
+		logger.Info("Skipping validation as it already failed for this generation",
+			"pipeline", vectorPipeline.Name,
+			"generation", vectorPipeline.Generation)
+		return ctrl.Result{}, nil
+	}
+
+	logger.Info("Checking validation status",
+		"pipeline", vectorPipeline.Name,
+		"currentGeneration", vectorPipeline.Generation,
+		"lastValidatedGeneration", lastValidatedGeneration,
+		"lastValidationStatus", getValidationStatus(validationCondition),
+		"observedGeneration", getObservedGeneration(validationCondition),
+		"needsValidation", needsValidation)
+
+	if needsValidation {
+		// Update status to indicate validation is in progress
+		meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
+			Type:               ConfigValidCondition,
+			Status:             metav1.ConditionUnknown,
+			Reason:             "ValidationInProgress",
+			Message:            "Vector configuration validation is in progress",
+			ObservedGeneration: vectorPipeline.Generation,
+			LastTransitionTime: metav1.NewTime(time.Now()),
+		})
+		vectorPipeline.Status.ValidationStatus = "InProgress"
+		vectorPipeline.Status.LastValidationTime = &metav1.Time{Time: time.Now()}
+		if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
+			logger.Error(err, "Unable to update VectorPipeline status")
+			return ctrl.Result{}, err
+		}
+
+		// Generate the complete Vector configuration for validation
+		configYaml, err := r.generateConfigForValidation(ctx, vector, vectorPipeline)
+		if err != nil {
+			logger.Error(err, "Failed to generate Vector configuration")
+			meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
+				Type:               ConfigValidCondition,
+				Status:             metav1.ConditionFalse,
+				Reason:             "ConfigGenerationFailed",
+				Message:            fmt.Sprintf("Failed to generate configuration: %v", err),
+				ObservedGeneration: vectorPipeline.Generation,
+				LastTransitionTime: metav1.NewTime(time.Now()),
+			})
+			vectorPipeline.Status.ValidationStatus = "Failed"
+			vectorPipeline.Status.LastValidationError = fmt.Sprintf("Failed to generate configuration: %v", err)
+			if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
+				logger.Error(err, "Unable to update VectorPipeline status")
+			}
+			return ctrl.Result{}, err
+		}
+
+		// Create or update the validation ConfigMap
+		validationCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      getValidationConfigMapName(vectorPipeline.Name),
+				Namespace: req.Namespace,
+			},
+			Data: map[string]string{
+				"vector.yaml": configYaml,
+			},
+		}
+
+		// Create or update the validation ConfigMap
+		if err := ctrl.SetControllerReference(vectorPipeline, validationCM, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		err = r.Create(ctx, validationCM)
+		if errors.IsAlreadyExists(err) {
+			if err := r.Update(ctx, validationCM); err != nil {
+				logger.Error(err, "Failed to update validation ConfigMap")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			logger.Error(err, "Failed to create validation ConfigMap")
+			return ctrl.Result{}, err
+		}
+
+		// Run validation first
+		if err := r.validateVectorConfig(ctx, req.Namespace, validationCM.Name, vectorPipeline.Name, vectorPipeline); err != nil {
+			logger.Error(err, "Vector configuration validation failed")
+			// Set validation condition
+			meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
+				Type:               ConfigValidCondition,
+				Status:             metav1.ConditionFalse,
+				Reason:             "ValidationFailed",
+				Message:            fmt.Sprintf("Configuration validation failed: %v", err),
+				ObservedGeneration: vectorPipeline.Generation,
+				LastTransitionTime: metav1.NewTime(time.Now()),
+			})
+
+			// Update Vector's pipeline validation status
+			if vector.Status.PipelineValidationStatus == nil {
+				vector.Status.PipelineValidationStatus = make(map[string]vectorv1alpha1.PipelineValidation)
+			}
+			vector.Status.PipelineValidationStatus[vectorPipeline.Name] = vectorv1alpha1.PipelineValidation{
+				Status:        "Failed",
+				Message:       fmt.Sprintf("Validation failed: %v", err),
+				LastValidated: metav1.NewTime(time.Now()),
+				Generation:    vectorPipeline.Generation,
+			}
+			// Remove from validated pipelines if validation fails
+			delete(vector.Status.ValidatedPipelines, vectorPipeline.Name)
+			if err := r.Status().Update(ctx, vector); err != nil {
+				logger.Error(err, "Failed to update Vector validation status")
+				return ctrl.Result{}, err
+			}
+			// Update status and return
+			if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
+				logger.Error(err, "Unable to update VectorPipeline validation status")
+				return ctrl.Result{}, err
+			}
+			// Don't requeue - wait for user to fix the configuration
+			return ctrl.Result{}, nil
+		}
+
+		// After successful validation
+		// Update Vector's pipeline validation status
+		if vector.Status.PipelineValidationStatus == nil {
+			vector.Status.PipelineValidationStatus = make(map[string]vectorv1alpha1.PipelineValidation)
+		}
+		vector.Status.PipelineValidationStatus[vectorPipeline.Name] = vectorv1alpha1.PipelineValidation{
+			Status:        "Validated",
+			Message:       "Configuration validation succeeded",
+			LastValidated: metav1.NewTime(time.Now()),
+			Generation:    vectorPipeline.Generation,
+		}
+		vector.Status.ValidatedPipelines[vectorPipeline.Name] = vectorPipeline.Generation
+
+		// Update Vector status before proceeding
+		if err := r.Status().Update(ctx, vector); err != nil {
+			logger.Error(err, "Failed to update Vector validation status")
+			return ctrl.Result{}, err
+		}
+
+		// Set successful validation condition
+		meta.SetStatusCondition(&vectorPipeline.Status.Conditions, metav1.Condition{
+			Type:               ConfigValidCondition,
+			Status:             metav1.ConditionTrue,
+			Reason:             "ValidationSucceeded",
+			Message:            "Vector configuration validation succeeded",
+			ObservedGeneration: vectorPipeline.Generation,
+			LastTransitionTime: metav1.NewTime(time.Now()),
+		})
+		vectorPipeline.Status.ValidationStatus = "Validated"
+		vectorPipeline.Status.LastValidatedGeneration = vectorPipeline.Generation
+		vectorPipeline.Status.LastValidationError = ""
+
+		// Update status and return
+		if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
+			logger.Error(err, "Unable to update VectorPipeline validation status")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	// Update pipeline metrics after status update
