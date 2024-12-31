@@ -120,11 +120,11 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}, vector)
 
 	// Update the status condition based on Vector existence
-	condition := metav1.Condition{
+	condition = metav1.Condition{
 		Type:               VectorRefCondition,
-			Status:             metav1.ConditionUnknown,
-			ObservedGeneration: vectorPipeline.Generation,
-			LastTransitionTime: metav1.NewTime(time.Now()),
+		Status:             metav1.ConditionUnknown,
+		ObservedGeneration: vectorPipeline.Generation,
+		LastTransitionTime: metav1.NewTime(time.Now()),
 	}
 
 	if err != nil {
