@@ -180,7 +180,7 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Check if we need to validate the configuration
-	validationCondition := meta.FindStatusCondition(vectorPipeline.Status.Conditions, ConfigValidCondition)
+	validationCondition = meta.FindStatusCondition(vectorPipeline.Status.Conditions, ConfigValidCondition)
 	// Initialize ValidatedPipelines if nil
 	if vector.Status.ValidatedPipelines == nil {
 		vector.Status.ValidatedPipelines = make(map[string]int64)
