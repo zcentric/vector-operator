@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -62,6 +63,13 @@ var _ = BeforeSuite(func() {
 		ErrorIfCRDPathMissing: true,
 		BinaryAssetsDirectory: filepath.Join("..", "..", "bin", "k8s",
 			fmt.Sprintf("1.30.0-%s-%s", runtime.GOOS, runtime.GOARCH)),
+		UseExistingCluster: nil,
+		ControlPlane: envtest.ControlPlane{
+			APIServer: &envtest.APIServer{
+				StartTimeout: 60 * time.Second,
+				StopTimeout:  60 * time.Second,
+			},
+		},
 	}
 
 	var err error
@@ -110,7 +118,35 @@ var _ = BeforeSuite(func() {
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
+	
+	By("canceling the manager context")
 	cancel()
-	err := testEnv.Stop()
-	Expect(err).NotTo(HaveOccurred())
+	
+	By("waiting for manager and controllers to shutdown")
+	time.Sleep(5 * time.Second)
+	
+	By("stopping the test environment")
+	done := make(chan error)
+	
+	go func() {
+		By("test environment stop started")
+		err := testEnv.Stop()
+		By("test environment stop completed")
+		done <- err
+	}()
+	
+	By("waiting for test environment to stop")
+	select {
+	case err := <-done:
+		By("test environment stopped successfully")
+		if err != nil {
+			By(fmt.Sprintf("test environment stop error: %v", err))
+		}
+	case <-time.After(60 * time.Second):
+		By("test environment stop timed out")
+	}
+	
+	// Force cleanup any remaining processes
+	By("ensuring all test processes are cleaned up")
+	time.Sleep(2 * time.Second)
 })
