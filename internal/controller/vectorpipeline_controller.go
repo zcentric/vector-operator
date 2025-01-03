@@ -169,6 +169,12 @@ func (r *VectorPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		condition.Reason = "VectorFound"
 		condition.Message = "Referenced Vector exists"
 
+		meta.SetStatusCondition(&vectorPipeline.Status.Conditions, condition)
+		if err := r.updateVectorPipelineStatus(ctx, vectorPipeline); err != nil {
+			logger.Error(err, "Unable to update VectorPipeline status with VectorRefValid condition")
+			return ctrl.Result{}, err
+		}
+
 		// Check if we need to validate the configuration
 		validationCondition := meta.FindStatusCondition(vectorPipeline.Status.Conditions, ConfigValidCondition)
 		// Initialize ValidatedPipelines if nil
