@@ -243,12 +243,3 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-## Features
-
-- Automated deployment and management of Vector instances
-- Pipeline configuration validation before deployment
-- Separate pipeline resources for modular configuration
-- Automatic configuration updates with validation
-
-
-
