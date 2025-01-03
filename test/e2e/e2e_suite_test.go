@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -110,7 +111,18 @@ var _ = BeforeSuite(func() {
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
+	
+	// First cancel the context to stop the manager
 	cancel()
+	
+	// Give the manager and controllers time to gracefully shutdown
+	time.Sleep(2 * time.Second)
+	
+	// Then stop the test environment with a timeout
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopCancel()
+	
+	// Stop the test environment
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
