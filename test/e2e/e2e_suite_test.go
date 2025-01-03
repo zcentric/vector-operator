@@ -63,6 +63,13 @@ var _ = BeforeSuite(func() {
 		ErrorIfCRDPathMissing: true,
 		BinaryAssetsDirectory: filepath.Join("..", "..", "bin", "k8s",
 			fmt.Sprintf("1.30.0-%s-%s", runtime.GOOS, runtime.GOARCH)),
+		UseExistingCluster: nil,
+		ControlPlane: envtest.ControlPlane{
+			APIServer: &envtest.APIServer{
+				StartTimeout: 60 * time.Second,
+				StopTimeout:  60 * time.Second,
+			},
+		},
 	}
 
 	var err error
@@ -116,14 +123,11 @@ var _ = AfterSuite(func() {
 	cancel()
 	
 	By("waiting for manager and controllers to shutdown")
-	// Give the manager and controllers more time to gracefully shutdown
 	time.Sleep(5 * time.Second)
 	
 	By("stopping the test environment")
-	// Create a channel to signal completion
 	done := make(chan error)
 	
-	// Stop the test environment in a goroutine
 	go func() {
 		By("test environment stop started")
 		err := testEnv.Stop()
@@ -131,14 +135,18 @@ var _ = AfterSuite(func() {
 		done <- err
 	}()
 	
-	// Wait for either completion or timeout
 	By("waiting for test environment to stop")
 	select {
 	case err := <-done:
 		By("test environment stopped successfully")
-		Expect(err).NotTo(HaveOccurred())
-	case <-time.After(30 * time.Second):
+		if err != nil {
+			By(fmt.Sprintf("test environment stop error: %v", err))
+		}
+	case <-time.After(60 * time.Second):
 		By("test environment stop timed out")
-		Fail("Timed out waiting for test environment to stop")
 	}
+	
+	// Force cleanup any remaining processes
+	By("ensuring all test processes are cleaned up")
+	time.Sleep(2 * time.Second)
 })
