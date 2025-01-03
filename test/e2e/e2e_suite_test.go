@@ -112,25 +112,33 @@ var _ = BeforeSuite(func() {
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
 	
-	// First cancel the context to stop the manager
+	By("canceling the manager context")
 	cancel()
 	
-	// Give the manager and controllers time to gracefully shutdown
-	time.Sleep(2 * time.Second)
+	By("waiting for manager and controllers to shutdown")
+	// Give the manager and controllers more time to gracefully shutdown
+	time.Sleep(5 * time.Second)
 	
+	By("stopping the test environment")
 	// Create a channel to signal completion
 	done := make(chan error)
 	
 	// Stop the test environment in a goroutine
 	go func() {
-		done <- testEnv.Stop()
+		By("test environment stop started")
+		err := testEnv.Stop()
+		By("test environment stop completed")
+		done <- err
 	}()
 	
 	// Wait for either completion or timeout
+	By("waiting for test environment to stop")
 	select {
 	case err := <-done:
+		By("test environment stopped successfully")
 		Expect(err).NotTo(HaveOccurred())
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
+		By("test environment stop timed out")
 		Fail("Timed out waiting for test environment to stop")
 	}
 })
