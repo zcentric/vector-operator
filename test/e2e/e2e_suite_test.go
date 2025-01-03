@@ -118,11 +118,19 @@ var _ = AfterSuite(func() {
 	// Give the manager and controllers time to gracefully shutdown
 	time.Sleep(2 * time.Second)
 	
-	// Then stop the test environment with a timeout
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer stopCancel()
+	// Create a channel to signal completion
+	done := make(chan error)
 	
-	// Stop the test environment
-	err := testEnv.Stop()
-	Expect(err).NotTo(HaveOccurred())
+	// Stop the test environment in a goroutine
+	go func() {
+		done <- testEnv.Stop()
+	}()
+	
+	// Wait for either completion or timeout
+	select {
+	case err := <-done:
+		Expect(err).NotTo(HaveOccurred())
+	case <-time.After(10 * time.Second):
+		Fail("Timed out waiting for test environment to stop")
+	}
 })
