@@ -1,8 +1,6 @@
 module github.com/zcentric/vector-operator
 
-go 1.24.0
-
-toolchain go1.24.1
+go 1.26
 
 require (
 	github.com/onsi/ginkgo/v2 v2.23.4
@@ -13,7 +11,7 @@ require (
 	k8s.io/api v0.33.0
 	k8s.io/apimachinery v0.33.0
 	k8s.io/client-go v0.33.0
-	k8s.io/utils v0.0.0-20250321185631-1f6e0b77f77e
+	k8s.io/utils v0.0.0-20261023123148-ca04ba58ecab
 	sigs.k8s.io/controller-runtime v0.20.4
 	sigs.k8s.io/yaml v1.4.0
 )
